@@ -1,5 +1,3 @@
-# Joezzb
-Hi
 This is the UROP project on Carlifornia Covid-19 Death Rate
 
 Github link for original code:
