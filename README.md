@@ -1,6 +1,6 @@
 # Joezzb
 Hi
-This is a M2R project code. Apply model from Report 23: State-level tracking of COVID-19 in the United States Version 2 (28-05-2020) on California data. (Partially). 
+This is the UROP project on Carlifornia Covid-19 Death Rate
 
 Github link for original code:
 https://github.com/ImperialCollegeLondon/covid19model/releases/tag/v6.0 
