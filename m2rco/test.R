@@ -12,7 +12,7 @@ library(stringr)
 # from process_data.R
 
 # indir <- file where the data folder is
-indir = '/Users/liuhanyang/Desktop/UROP-Stats/M2R/Joezzb/m2rco'
+#indir = '/m2rco'
 
 setwd(indir)
 
@@ -176,7 +176,7 @@ dd$region_census_sub_revised<-'Pacific'
 
 #density
 
-den<-read_csv(url("https://raw.githubusercontent.com/Joezzb/Joezzb/m2r/m2rco/pop_den.csv"))
+den<-read_csv('./data/pop_den.csv')
 
 den<-den[,c(1,4)]
 
@@ -258,6 +258,7 @@ ca_mob$avg <- rowMeans(ca_mob[,c(4:6,8)])
 
 colnames(ca_mob)[1] <- "sub_region_1"
 
+# error
 ca_mob <- ca_mob %>%
   mutate(date = as.Date(date)) %>%
   complete(date = seq.Date(min(dd$date), max(dd$date), by="day"), sub_region_1) %>%
@@ -341,3 +342,4 @@ rstan_options(auto_write = TRUE)
 mod <- stan_model("test.stan")
 
 fit <- sampling(mod, data=data, iter=100, warmup=50, chains = 4,thin=1,control = list(adapt_delta = 0.95, max_treedepth = 10))
+
