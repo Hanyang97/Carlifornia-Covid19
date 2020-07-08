@@ -21,7 +21,7 @@ source('usa/code/process-covariates.r')
 #GFNAME_county_population <<-'covid_county_population_usafacts.csv'
 #GFNAME_county_death <<- 'covid_deaths_usafacts.csv'
 
-indir <- 'F:/m2r/m2rcovid/'
+indir <- './'
 setwd(indir)
 
 # Deaths are from
@@ -34,7 +34,7 @@ infile.pop <- file.path(indir,'covid_county_population_usafacts.csv')
 
 #	read & select death data
 dd <- as.data.table( read.csv(infile.deaths, stringsAsFactors=FALSE) ) 
-setnames(dd,"ï»¿countyFIPS",'countyFIPS')
+setnames(dd,"ÿcountyFIPS",'countyFIPS')
 #luanma
 
 dd <- melt(dd, id.vars=c('countyFIPS','County.Name','State','stateFIPS'), variable.name='DATE', value.name='CDEATHS')
@@ -54,7 +54,7 @@ dd <- merge(dd, tmp, by=c('COUNTYFIPS','DATE'), all.x=TRUE)
 
 #	read county pop & merge with death data 
 dp <- as.data.table( read.csv(infile.pop, stringsAsFactors=FALSE) )
-setnames(dp,"ï»¿countyFIPS",'countyFIPS')
+setnames(dp,"ÿcountyFIPS",'countyFIPS')
 #luanma
 setnames(dp, colnames(dp), gsub('\\.','_',toupper(colnames(dp))))
 dd <- merge(dd, dp, by=c('STATE','COUNTYFIPS','COUNTY_NAME'))
@@ -79,7 +79,7 @@ CA_ifr<-cbind(CA_ifr,states,code)
 #case https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/
 infile.case <- file.path(indir,'covid_confirmed_usafacts.csv')
 cc <- as.data.table( read.csv(infile.case, stringsAsFactors=FALSE) ) 
-setnames(cc,"ï»¿countyFIPS",'countyFIPS')
+setnames(cc,"ÿcountyFIPS",'countyFIPS')
 cc <- melt(cc, id.vars=c('countyFIPS','County.Name','State','stateFIPS'), variable.name='DATE', value.name='CASE')
 setnames(cc, colnames(cc), gsub('\\.','_',toupper(colnames(cc))))
 cc <- subset(cc, STATE=='CA')
