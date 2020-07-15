@@ -7,7 +7,7 @@ data {
   int<lower=1> N2; // days of observed data + # of days to forecast
   int deaths[N2, M]; // reported deaths -- the rows with i > N contain -1 and should be ignored
   matrix[N2, M] f; // ifr
-  matrix[N2, P] X[M];
+  matrix[N2, P] X;
   matrix[N2, P_partial_state] X_partial_state[M];
   int EpidemicStart[M];
   real pop[M];
