@@ -7,7 +7,7 @@ data {
   int<lower=1> N2; // days of observed data + # of days to forecast
   int deaths[N2, M]; // reported deaths -- the rows with i > N contain -1 and should be ignored
   matrix[N2, M] f; // ifr
-  matrix[N2, P] X[M];
+  matrix[N2, P] X;
   matrix[N2, P_partial_state] X_partial_state[M];
   int EpidemicStart[M];
   real pop[M];
@@ -53,7 +53,7 @@ transformed parameters {
         prediction[1:N0,m] = rep_vector(y[m],N0); // learn the number of cases in the first N0 days
         cumm_sum[2:N0,m] = cumulative_sum(prediction[2:N0,m]);
         
-        Rt[,m] = mu[m] * 2 * inv_logit(-X[m] * alpha
+        Rt[,m] = mu[m] * 2 * inv_logit(-X * alpha
                           -X_partial_state[m] * alpha_state[m] 
                           );
         Rt_adj[1:N0,m] = Rt[1:N0,m];

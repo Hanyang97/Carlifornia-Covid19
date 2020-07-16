@@ -13,7 +13,7 @@ library(readr)
 
 # from process_data.R
 # indir <- file directory\
-indir <- '~/Desktop/UROP-Stats/M2R/Carlifornia-Covid19/m2rco'
+# indir <- './Carlifornia-Covid19/m2rco'
 setwd(indir)
 
 
@@ -173,11 +173,12 @@ for(i in 1:58) {
 }
 
 # choose minimum deaths
-sig <- states[which(total_deaths>100)]
+sig <- states[which(total_deaths>10)]
 
 dd1 <- subset(dd, state_name %in% sig)
 
-M = 9
+# no. of counties
+M = length(sig)
 
 P = 3
 
@@ -224,13 +225,13 @@ SI <- stan_data[["SI"]][15:148]
 
 data1 <- c("M", "P", "P_partial_state", "N0", "N", "N2", "deaths", "f", "X", "X_partial_state", "EpidemicStart", "pop", "SI")
 
-# options(mc.cores = parallel::detectCores())
+options(mc.cores = parallel::detectCores())
 
-# rstan_options(auto_write = TRUE)
+rstan_options(auto_write = TRUE)
 
 mod1 <- stan_model("usa/code/stan-models/base-usa-simple.stan")
 
-fit2 <- sampling(mod1, data=data1, iter=100, chains=4)
+fit2 <- sampling(mod1, data=data1, iter=1000, chains=4)
 
 # data = list('M' = M,
 #             'P' = P,
