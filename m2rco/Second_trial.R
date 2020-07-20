@@ -204,7 +204,7 @@ dd1 <- subset(dd1, date>=min_date)
 
 deaths <- matrix(data=dd1$daily_deaths, nrow = N2, ncol = M)
 
-f <- matrix(CA_ifr$ifr, nrow = N2, ncol = M)
+f <- matrix(CA_ifr$ifr[1], nrow = N2, ncol = M)
 
 X_partial <- list()
 

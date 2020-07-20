@@ -1,0 +1,2329 @@
+seq.int(5, by=1, len=7)
+library(rstan)#
+library(data.table)#
+library(gdata)#
+library(EnvStats)#
+#
+args <- list( #
+  stanModelFile= 'base_age_fsq_mobility_200703l_cmdstanv',#
+  seed= 42,#
+  chain= 1,#
+  indir= '~/git/R0t',#
+  outdir= "~/Downloads/figures",#
+  job_tag= '4states_stdcntct',#
+  ovrcnt = 1L,#
+  seedAge = 7L,#
+  cmdstan = 0L,#
+  country_contact = "United_Kingdom",#
+  countries= "CO,CT,FL,NYC"#
+  #countries= "AL,AZ,CA,CO,CT,FL,GA,IL,IN,LA,MA,MD,MI,MS,NC,NJ,NYC,TN,WA"#
+  #countries= "AL,AZ,CA,CO,CT,FL,GA,IA,ID,IL,IN,KS,KY,LA,MA,MD,MI,MS,NC,ND,NH,NJ,NV,NYC,OK,OR,RI,SC,TN,VA,WA,WI"#
+)
+## set other args#
+args$cntct_by <- 5L	#
+args$file_stanModel <- file.path(args$indir, 'stan-models',paste0(args$stanModelFile,'.stan'))#
+args$file_jhu_death_data_padded <- file.path(args$indir,"usa","data","jhu_death_data_padded_200629.rds")#
+args$file_nyt_death_data_padded <- file.path(args$indir,"usa","data","nyt_death_data_padded_200629.rds")#
+args$file_nyc_death_data_padded <- file.path(args$indir,"usa","data","NYC_deaths_200629.csv")#
+args$file_death_data_by_age <- file.path(args$indir,"usa","data","DeathsByAge_US_200629.csv")#
+args$file_ihme_hospitalization <- file.path(args$indir,"usa","data","Hospitalization_all_locs.csv")#
+args$file_states <- file.path(args$indir,"usa","data","states.csv")#
+args$file_weighted_ifr <- file.path(args$indir,"usa","data","weighted_ifr.RDS")#
+args$file_global_mobility_report <- file.path(args$indir,'data','Global_Mobility_Report_200602.csv')#
+args$file_fsq_mobility <- file.path(args$indir,'usa','data','fsq_visit_data_FROMJAN_toJUN_200623.csv')#
+args$file_resnonres_trends <- file.path(args$indir,'usa','data','google_Mobility_Multipliers_US_by_state_200602.rds') #
+args$file_grouped <- file.path(args$indir,"usa","data","grouped.csv")#
+args$file_us_population <- file.path(args$indir,"usa","data","us_population_withnyc.rds")#
+args$file_serial_interval <- file.path(args$indir,'usa','data','serial_interval.csv')#
+args$file_covariates <- file.path(args$indir,"usa","data","covariates.RDS")#
+#TODO choose the next three files depending on args$country_contact#
+args$file_contact_weekday <- file.path(args$indir,'data','polymod.tab.bin_GB_weekday.rda') #
+args$file_contact_weekend <- file.path(args$indir,'data','polymod.tab.bin_GB_weekend.rda') #
+args$file_polymod_data <- file.path(args$indir,'data','polymod_data_with_covariates_200623.rds')#
+args$file_polymod_data_1y <- file.path(args$indir,'data','polymod_data_1yageband_200705.rds')#
+args$file_contact <- file.path(args$indir,'data','polymod.tab.bin_GB.rda')#
+args$file_contact_period <- file.path(args$indir,'data') # with weekday weekend#
+args$file_pop_age <- file.path(args$indir,'data','popByAge_v200421.csv')#
+args$file_us_area <- file.path(args$indir,"usa","data","us_states_area_measurements.csv")#
+args$file_age_ifr <- file.path(args$indir,'data','ifr_age_200504.csv') # prior with smooth spline on Verity estimates  (utils/fit.smooth.line.ifr.by.age.r)#
+args$file_age_ifr_verity <- file.path(args$indir,'data','ifr_age_200429.csv')#
+args$file_age_ifr_lognormal <- file.path(args$indir,'data','ifr_age_200624.csv')#
+args$file_CI_OR <- file.path(args$indir, "usa", "data", "CI_OR_age_Zhang.csv")#
+args$file_region <- file.path(args$indir, "usa", "data", "usa-regions.csv")#
+tmp <- Sys.getenv("PBS_JOBID")#
+args$job_id <- ifelse(tmp!='', tmp, as.character(abs(round(rnorm(1) * 1e6))) )#
+args$job_dir <- file.path(args$outdir,paste0(args$stanModelFile,'-',args$job_tag,'-',args$job_id)) #
+args$DEBUG <- FALSE#
+args$makeplots <- TRUE#
+#
+# Do you want to pooled google mobility into #
+# residential, transstation and avg mobility (mean of retail & recreation, grocery & pharmac, workplace and park)#
+args$with_avg_mobility_data <- 1	#
+args$change_covariates_coef_after_upswing <- 1#
+args$with_upswing_rnde <- 0#
+#
+## start script#
+cat(sprintf("Running\n"))#
+#
+source(file.path(args$indir, "usa","code","utils","process-covariates.r"))#
+source(file.path(args$indir, "utils","prepare-contact-rates.r"))#
+source(file.path(args$indir, "usa","code","utils","read-data-usa.r"))#
+source(file.path(args$indir, "usa","code","utils","make-exploratory-stats.r"))#
+#source(file.path(args$indir, "utils", "find.polynomial.coefficients.ifr.by.age.r"))#
+#
+## determine prior used from on stan file chosen#
+# use the new framework of non-res and res on the contact matrix (mot compatible with beta age yet)#
+args$with_res_nonres_contactmatrix_model <- 0#
+# what prior do you want to use on ifr by age (if both 0, ifr by age is not used)#
+args$with_beta_prior_on_each_ifr_by_age_band <- 0#
+args$with_lognormal_prior_on_each_ifr_by_age_band <- 0#
+args$with_polynomial_prior_on_ifr_by_age <- 0#
+args$with_logitincrements_prior_on_ifr_by_age <- 0#
+args$with_ifr_rnde_mid1_mid2_old <- 0#
+# what prior do you want to use on beta age (if both 0, beta age is not used)#
+args$with_truncatednormal_on_each_beta_age_by_age_band <- 0#
+args$with_splines_prior_on_beta_age <- 0#
+args$with_gp_prior_on_beta_age <- 0#
+args$with_gmrf_prior_on_beta_age <- 0#
+args$with_lognormal_prior_relsusceptibility <- 0#
+# with google moblity#
+args$with_google_mobility <- 0#
+#with foursquare mobility data #
+args$with_fsq_mobility <- 0#
+#with reduced age buckets for parameters#
+args$with_reduced_age_parameters <- 0#
+#with expected number of contacts by age adjusted for state population composition#
+args$with_contacts_adjusted_for_age <- 1#
+#with expected number of contacts by age adjusted for overall FSQ visits in baseline period #
+args$scale_contactmatrix_bystate <- 0#
+#with expected number of contacts by age adjusted for age specific FSQ visits in baseline period #
+args$scale_contactmatrix_bystateandage <- 0#
+# with week effects#
+args$with_week_effects <- 0#
+# apply mobility trends to both rows and cols of baseline contact matrix#
+args$with_eta2 <- 0#
+# distribute initial cases before N0 among individuals aged 20 to 54#
+args$with_inits_20_54 <- 0#
+# set US states to include in inference #
+args$states <- strsplit(args$countries,',')[[1]]#
+args$countries <- NULL#
+#
+if(grepl("google_mobility_200516_cmdstanv", args$file_stanModel)){	#
+  args$with_google_mobility <- 1#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1#
+}#
+if(grepl("google_mobility_200520c_cmdstanv", args$file_stanModel)){	#
+  args$with_google_mobility <- 1#
+  args$with_truncatednormal_on_each_beta_age_by_age_band <- 1#
+}#
+if(grepl("google_mobility_200524_cmdstanv", args$file_stanModel)){	#
+  args$with_google_mobility <- 1#
+  args$with_truncatednormal_on_each_beta_age_by_age_band <- 1#
+}#
+if(grepl("google_mobility_200525_cmdstanv", args$file_stanModel)){	#
+  args$with_google_mobility <- 1#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1#
+  args$with_truncatednormal_on_each_beta_age_by_age_band <- 1#
+}#
+if(grepl("google_mobility_200525c_cmdstanv", args$file_stanModel)){	#
+  args$with_google_mobility <- 1#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1#
+}#
+if(grepl("google_mobility_200530_cmdstanv", args$file_stanModel)){	#
+  args$with_google_mobility <- 1#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1#
+  args$with_splines_prior_on_beta_age <- 1#
+  args$spline_degree = 3L#
+  args$num_knots = 8L#
+}#
+if(grepl("google_mobility_200602_cmdstanv|google_mobility_200602b_cmdstanv|google_mobility_200610_cmdstanv", args$file_stanModel)){	#
+  args$with_google_mobility <- 1#
+  args$with_truncatednormal_on_each_beta_age_by_age_band <- 0#
+  args$with_polynomial_prior_on_ifr_by_age <- 1					#
+}#
+if(grepl("resnonrestrends_200602_cmdstanv|resnonrestrends_200602b_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 0#
+  args$with_google_mobility <- 1	#
+  args$with_res_nonres_contactmatrix_model <- 1#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1	#
+}#
+if(grepl("base_age_fsq_mobility_200606_cmdstanv|base_age_fsq_mobility_200606b_cmdstanv|base_age_fsq_mobility_200606c_cmdstanv|base_age_fsq_mobility_200606d_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1	#
+  args$change_covariates_coef_after_upswing <- 1#
+}#
+if(grepl("base_age_fsq_mobility_200611_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_polynomial_prior_on_ifr_by_age <- 1	#
+  args$change_covariates_coef_after_upswing <- 1#
+}#
+if(grepl("base_age_fsq_mobility_200625_cmdstanv|base_age_fsq_mobility_200615f_cmdstanv|base_age_fsq_mobility_200615a_cmdstanv|base_age_fsq_mobility_200615b_cmdstanv|base_age_fsq_mobility_200612g_cmdstanv|base_age_fsq_mobility_200612h_cmdstanv|base_age_fsq_mobility_200612_cmdstanv|base_age_fsq_mobility_200612c_cmdstanv|base_age_fsq_mobility_200612d_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1	#
+  args$change_covariates_coef_after_upswing <- 1  #
+}#
+if(grepl("base_age_fsq_mobility_200615c_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1	#
+  args$change_covariates_coef_after_upswing <- 1  #
+  args$with_reduced_age_parameters <- 1#
+}#
+if(grepl("base_age_fsq_mobility_200615d_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1	#
+  args$change_covariates_coef_after_upswing <- 1  #
+  args$with_reduced_age_parameters <- 1#
+  args$with_lognormal_prior_relsusceptibility <- 1#
+}#
+if(grepl("base_age_fsq_mobility_200615h_cmdstanv|base_age_fsq_mobility_200615e_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1	#
+  args$change_covariates_coef_after_upswing <- 1  #
+}#
+if(grepl("base_age_fsq_mobility_200612b_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1	#
+  args$with_gp_prior_on_beta_age <- 1#
+  args$change_covariates_coef_after_upswing <- 1#
+}#
+if(grepl("base_age_fsq_mobility_200617_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1	#
+  args$with_gmrf_prior_on_beta_age <- 1#
+  args$change_covariates_coef_after_upswing <- 1#
+}#
+if(grepl("base_age_fsq_mobility_200619c_cmdstanv|base_age_fsq_mobility_200619b_cmdstanv|base_age_fsq_mobility_200619_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_logitincrements_prior_on_ifr_by_age <- 1	#
+  args$change_covariates_coef_after_upswing <- 1#
+}#
+if(grepl("base_age_fsq_mobility_200615i_cmdstanv|base_age_fsq_mobility_200615g_cmdstanv|base_age_fsq_mobility_200619e_cmdstanv|base_age_fsq_mobility_200619d_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_logitincrements_prior_on_ifr_by_age <- 1#
+  args$with_reduced_age_parameters <- 1#
+  args$change_covariates_coef_after_upswing <- 1#
+}#
+if(grepl("base_age_fsq_mobility_200624c_cmdstanv|ase_age_fsq_mobility_200624b_cmdstanv|base_age_fsq_mobility_200624a_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_beta_prior_on_each_ifr_by_age_band <- 1	#
+  args$change_covariates_coef_after_upswing <- 1  #
+}#
+if(grepl("base_age_fsq_mobility_200625c_cmdstanv", args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_lognormal_prior_on_each_ifr_by_age_band <- 1	#
+  args$change_covariates_coef_after_upswing <- 1  #
+  args$with_week_effects <- 1#
+}#
+if(grepl("fsq_mobility_200630g|fsq_mobility_200630f|fsq_mobility_200630e|fsq_mobility_200630d|fsq_mobility_200630c|fsq_mobility_200630b|fsq_mobility_200630a|fsq_mobility_200625b|fsq_mobility_200625a|fsq_mobility_200703a", #
+         args$file_stanModel)){#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_lognormal_prior_on_each_ifr_by_age_band <- 1	#
+  args$change_covariates_coef_after_upswing <- 1  		#
+}#
+if(grepl("fsq_mobility_200704b|fsq_mobility_200704a|fsq_mobility_200703i|fsq_mobility_200703b|fsq_mobility_200703c|fsq_mobility_200703d|fsq_mobility_200703e", args$file_stanModel))#
+{#
+  args$with_fsq_mobility <- 1#
+  args$with_google_mobility <- 0	#
+  args$with_lognormal_prior_on_each_ifr_by_age_band <- 1	#
+  args$change_covariates_coef_after_upswing <- 1#
+  args$with_ifr_rnde_mid1_mid2_old <- 1#
+  args$with_upswing_rnde <- 1#
+}#
+if(grepl("fsq_mobility_200703f|fsq_mobility_200703g|fsq_mobility_200703h|fsq_mobility_200703j|fsq_mobility_200703k", args$file_stanModel))#
+{#
+	args$with_fsq_mobility <- 1#
+	args$with_google_mobility <- 0	#
+	args$with_lognormal_prior_on_each_ifr_by_age_band <- 1	#
+	args$change_covariates_coef_after_upswing <- 1#
+	args$with_ifr_rnde_mid1_mid2_old <- 1#
+	args$with_upswing_rnde <- 1#
+	args$with_eta2 <- 1#
+}#
+if(grepl("fsq_mobility_200703l", args$file_stanModel))#
+{#
+	args$with_fsq_mobility <- 1#
+	args$with_google_mobility <- 0	#
+	args$with_lognormal_prior_on_each_ifr_by_age_band <- 1	#
+	args$change_covariates_coef_after_upswing <- 1#
+	args$with_ifr_rnde_mid1_mid2_old <- 1#
+	args$with_upswing_rnde <- 1#
+	args$with_eta2 <- 1#
+	args$with_inits_20_54 <- 1#
+}
+str(args)#
+set.seed(args$seed)#
+#
+## make job dir#
+dir.create( args$job_dir )#
+## save input args#
+saveRDS( args, file=file.path(args$job_dir, paste0(basename(args$job_dir), '_args.RDS')))#
+# reset global file names as needed#
+GFNAME_jhu_death_data_padded <<- args$file_jhu_death_data_padded#
+GFNAME_nyt_death_data_padded <<- args$file_nyt_death_data_padded#
+GFNAME_nyc_death_data_padded <<- args$file_nyc_death_data_padded#
+#GFNAME_deathByAge_data_padded <<- args$file_death_data_by_age#
+GFNAME_ihme_hospitalization <<- args$file_ihme_hospitalization#
+GFNAME_states <<- args$file_states#
+GFNAME_global_mobility_report <<- args$file_global_mobility_report#
+GFNAME_grouped <<- args$file_grouped#
+GFNAME_us_population <<- args$file_us_population#
+GFNAME_allcountry_population <<- args$file_pop_age#
+GFNAME_region <<- args$file_region#
+GFNAME_ifrbyage_spline <<- args$file_age_ifr#
+GFNAME_fsq_mobility <<- args$file_fsq_mobility#
+#
+# Read which countires to usa#
+death_data <- read_death_data(source = "jhu", smooth = FALSE)#
+ny_data <- read_death_data(source = "nyt", smooth = FALSE)#
+ny_data <- ny_data[ny_data$code=='NY', ]#
+# NYT and JHU death data is different lengths#
+max_ny <- max(ny_data$date)#
+max_jhu <- max(death_data$date)#
+max_date <- min(max_ny, max_jhu)#
+death_data <- death_data[death_data$code!='NY', ]#
+death_data <- bind_rows(death_data, ny_data)#
+death_data <- death_data[which(death_data$date <= max_date),]#
+# NYC data#
+nyc_data <- read_death_data(source = "nyc", smooth = FALSE)#
+#
+# same format as for europe analysis#
+death_data <- death_data %>% #
+  ungroup() %>%#
+  rename(state = state_name, Deaths = daily_deaths, Cases = daily_cases) %>%#
+  mutate(DateRep = format(date, "%d/%m/%Y")) %>%#
+  select("date", "Cases", "Deaths", "state", "code") #
+death_data <- rbind(subset(death_data, date %in% nyc_data$date), subset(nyc_data, date %in% death_data$date))#
+#
+#death_data <- subset(death_data, date < as.Date("2020-05-25"))#
+#
+# read death data by age #
+deathByAge <- read_deathByAge( args$file_death_data_by_age )#
+deathByAge_data <- process_deathByAge(deathByAge = deathByAge, #
+                                     range_date = range(death_data$date), #
+                                     states = args$states)
+# read ifr by age#
+if(!args$with_lognormal_prior_on_each_ifr_by_age_band)#
+{#
+  cat('\nReading ifr by age with beta parameters ...')#
+  ifr.by.age <- read_ifr_data_by_age(args$file_us_population, args$file_age_ifr)#
+  ifr.by.age <- ifr.by.age %>% rename(age_cat:= age)	#
+}#
+if(args$with_lognormal_prior_on_each_ifr_by_age_band)#
+{#
+  cat('\nReading ifr by age with log normal parameters ...')#
+  ifr.by.age <- read_ifr_data_by_age_lognormal(args$file_age_ifr_lognormal)		#
+}#
+#
+# read interventions#
+covariates <- readRDS(args$file_covariates)#
+#
+#read population count#
+pop_count <- read_pop_count_us( args$file_us_population )#
+#
+# read population count by age#
+pop_by_age <- read_pop_count_by_age_us( args$file_us_population )
+args$makeplots <- 0
+if(args$makeplots)  #
+{#
+	plot_demograpy(pop_by_age, plotdir=args$job_dir)#
+}#
+#
+#	read land area size of US states#
+darea <- read_us_state_areas(args$file_us_area)#
+#
+#	collect all pop info data sets into one#
+pop_info <- process_make_pop_info(pop_count, pop_by_age, darea)#
+setkey(pop_info, loc, age.cat)#
+pop_by_age <- NULL#
+pop_count <- NULL#
+darea <- NULL#
+#
+# make death by age plots #
+if(args$makeplots) #
+{#
+	plot_deaths_by_age_data(deathByAge, pop_info, plotdir=args$job_dir)#
+	plot_death_by_age_vs_deaths_overall(deathByAge, death_data, pop_info, plotdir=args$job_dir)#
+}#
+#
+#	read expected contacts #
+#if(args$makeplots) plot_contact_matrix_polymod_countries(args$file_polymod_data_1y,plotdir=args$job_dir)#
+if(args$with_contacts_adjusted_for_age==0)#
+{			#
+  #	read polymod contact matrices	#
+  cat('\nReading base contact matrix from ',args$file_contact_weekday, ' ... ')#
+  dpolymod.weekday <- read_contact_rate_matrix(pop_info, args$file_contact_weekday)#
+  cat('\nReading base contact matrix from ',args$file_contact_weekend, ' ... ')#
+  dpolymod.weekend <- read_contact_rate_matrix(pop_info, args$file_contact_weekend)#
+  #	make location specific polymod contact matrices#
+  dcontact <- process_make_contact_matrix_by_country(dpolymod.weekday, pop_info, 0)#
+  dcontact[, type:='weekday']#
+  tmp <- process_make_contact_matrix_by_country(dpolymod.weekend, pop_info, 0)#
+  tmp[, type:='weekend']#
+  dcontact <- rbind(dcontact, tmp)	#
+  # TODO we need to use something like normalize_UK_total_contact in sensitivity analyses using a difference base contact matrix?	#
+}#
+#	dev version: predict expected contacts using logpop model#
+if(args$with_contacts_adjusted_for_age==1)#
+{				#
+  cat('\nPredicting contact matrix for weekday using log(m) ~ cont_pop_p + log(pop_dens) + part.age.cat.label2 : cont.age.cat.label2 - 1L ... ')#
+  dcontact <- process_make_contact_matrix_by_country_using_popp_logpopdens_model(pop_info, 'weekday', args$file_polymod_data)	#
+  dcontact[, type:='weekday']#
+  cat('\nPredicting contact matrix for weekend using log(m) ~ cont_pop_p + log(pop_dens) + part.age.cat.label2 : cont.age.cat.label2 - 1L ... ')#
+  tmp <- process_make_contact_matrix_by_country_using_popp_logpopdens_model(pop_info, 'weekend', args$file_polymod_data)	#
+  tmp[, type:='weekend']#
+  dcontact <- rbind(dcontact, tmp)	#
+  if(args$makeplots)#
+  {#
+    plots_baseline_contact_matrices(pop_info, dcontact,args$file_polymod_data, plotdir=args$job_dir) #
+  }#
+  # TODO we need to use something like normalize_UK_total_contact in sensitivity analyses using a difference base contact matrix?	#
+}
+# Read serial interval#
+serial_interval = read.csv(args$file_serial_interval)#
+#
+# Read google mobility, apple mobility, interventions, stringency#
+if(args$with_google_mobility && args$with_res_nonres_contactmatrix_model==0)#
+{#
+  cat('\nLoading Google mobility statistics...\n')#
+  mobility_data <- read_google_mobility()	#
+  #	TODO we are setting google mobility in NYC to that of NY State #
+  mobility_data_NYC <- subset(mobility_data, code == "NY")#
+  mobility_data_NYC$code <- "NYC" #
+  mobility_data_NYC$sub_region_1 <- "New_York_City" #
+  mobility_data <- rbind(mobility_data, mobility_data_NYC)#
+}#
+if(args$with_google_mobility && args$with_res_nonres_contactmatrix_model==1)#
+{#
+  cat('\nLoading estimated residential and non-residential mobility trends...\n')#
+  mobility_data <- read_google_resnonrestrends( args$file_resnonres_trends )	#
+}#
+#
+if(args$with_fsq_mobility)#
+{#
+  cat('\nLoading Foursquare mobility data...\n')#
+  mobility_data <- read_foursquare_mobility(pop_info)#
+  if(args$makeplots) #
+  {#
+    plot_raw_mobility_data(mobility_data, plotdir=args$job_dir)#
+  }#
+  pop_info <- map_fsq_age_in_pop_info(mobility_data,pop_info)#
+  cat('\nProcessing Foursquare mobility trends...\n')#
+  tmp <- process_fsq_mobility_into_mobility_trends_and_baseline_contacts(mobility_data, #
+                                                                         dcontact, #
+                                                                         pop_info, #
+                                                                         args$scale_contactmatrix_bystate, #
+                                                                         args$scale_contactmatrix_bystateandage)#
+  fsqbr <- copy(tmp$fsqbr)#
+  if (args$makeplots)#
+  { #
+    plot_raw_mobility_data(mobility_data, plotdir=args$job_dir)#
+    plot_mobility_trends(fsqbr,mobility_data,plotdir=args$job_dir)#
+  }#
+  mobility_data <- copy(tmp$fsq)#
+  dcontact <- copy(tmp$ctc)#
+  tmp <- NULL#
+}
+# Number of days to forecast#
+forecast <- 7#
+#
+# Maximum number of days to simulate#
+num_days_sim <- (max(death_data$date) - min(death_data$date) + 1 + forecast)[[1]]#
+#
+# process data#
+processed_data <- process_covariates_gm_2(states = args$states, #
+                                          death_data = death_data, #
+                                          deathByAge_data = deathByAge_data,                                           #
+                                          ifr.by.age = ifr.by.age,                                         #
+                                          serial_interval = serial_interval,#
+                                          pop_info = pop_info, #
+                                          dcontact= dcontact,                                          #
+                                          seedAge = args$seedAge, #
+                                          num_days_sim = num_days_sim, #
+                                          forecast = forecast)#
+#
+if(args$with_google_mobility){#
+  cat('\nAdding google mobility covariates to stan_data ...')#
+  processed_data <- process_covariates_add_google_mobility(processed_data, mobility_data, args$with_avg_mobility_data)#
+}#
+if(args$with_fsq_mobility){  #
+  cat('\nAdding Foursquare mobility covariates to stan_data ...')#
+  processed_data <- process_covariates_add_fsq_mobility(processed_data, mobility_data)#
+}#
+if( args$with_beta_prior_on_each_ifr_by_age_band )#
+{#
+  cat('\nAdding beta_prior_on_each_ifr_by_age_band to stan_data ... ')#
+  processed_data <- process_covariates_add_beta_prior_on_ifr_by_age(processed_data, ifr.by.age)#
+}#
+if( args$with_lognormal_prior_on_each_ifr_by_age_band )#
+{#
+  cat('\nAdding lognormal prior on each ifr by age band to stan_data ... ')#
+  processed_data <- process_covariates_add_lognormal_prior_on_ifr_by_age(processed_data, ifr.by.age)#
+}#
+if( args$with_logitincrements_prior_on_ifr_by_age )#
+{#
+  cat('\nAdding logit increments_prior_on_each_ifr_by_age_band to stan_data ... ')#
+  processed_data <- process_covariates_add_logitincrements_prior_on_ifr_by_age(processed_data, ifr.by.age)#
+}#
+if( args$with_polynomial_prior_on_ifr_by_age )#
+{	#
+  cat('\nAdding polynomial_prior_on_ifr_by_age to stan_data ... ')#
+  logit.coef.ifr.by.age <- find.logit.coef.ifr(args$file_age_ifr_verity)	#
+  processed_data <- process_covariates_add_logitprior_ifrbyage(processed_data, logit.coef.ifr.by.age)#
+}#
+if( args$with_lognormal_prior_relsusceptibility )#
+{#
+  cat('\nAdding lognormal_prior_relsusceptibility to stan_data ...')#
+  processed_data <- process_covariates_add_lognormal_prior_relsusceptibility(processed_data, args$file_CI_OR)#
+}#
+if( args$with_splines_prior_on_beta_age )#
+{#
+  cat('\nAdding splines_prior_on_beta_age to stan_data ...')#
+  processed_data <- process_covariates_add_splines(processed_data, args$spline_degree, args$num_knots)#
+}#
+if( args$with_gp_prior_on_beta_age )#
+{#
+  cat('\nAdding gp_prior_on_beta_age to stan_data ...')#
+  processed_data <- process_covariates_add_gpprior_betaage(processed_data)#
+}#
+if( args$with_gmrf_prior_on_beta_age )#
+{#
+  cat('\nAdding gmrf_prior_on_beta_age to stan_data ...')#
+  processed_data <- process_covariates_add_GMRF_prior_on_susceptibility(processed_data)#
+}#
+#
+if( args$with_week_effects )#
+{#
+  cat('\nAdding week effects to stan_data ...')#
+  processed_data <- process_covariates_add_week_effects(processed_data)#
+}#
+if( args$with_google_mobility && args$with_res_nonres_contactmatrix_model==1 )#
+{	#
+  cat('\nAdding resnonres_constraints_on_alpha_beta to stan_data ... ')#
+  processed_data <- process_covariates_add_resnonres_constraints_on_alpha_beta(processed_data, contact_tab)#
+}#
+if( args$with_google_mobility && args$change_covariates_coef_after_upswing==1 )#
+{	#
+  cat('\nAdding decoupled Google mobility covariates after upswing to stan_data ... ')#
+  processed_data <- process_covariates_add_google_mobility_covariates_after_breakpoint(processed_data)#
+}#
+if( args$with_fsq_mobility==1 && args$change_covariates_coef_after_upswing==1 )#
+{	#
+  cat('\nAdding decoupled FSQ covariates after upswing to stan_data ... ')#
+  if(!args$makeplots) processed_data <- process_covariates_add_fsq_covariates_after_breakpoint(processed_data,pop_info)#
+  if(args$makeplots) processed_data <- process_covariates_add_fsq_covariates_after_breakpoint(processed_data, pop_info, plotdir = args$job_dir)#
+}#
+if( args$with_reduced_age_parameters )#
+{#
+  cat('\nAdding age map to use reduced age parameters ... ')#
+  #processed_data <- process_covariates_add_age_band_map_7cat_refLast(processed_data)#
+  #processed_data <- process_covariates_add_age_band_map_8cat_ref4(processed_data)#
+}#
+if( args$with_eta2 )#
+{#
+	cat('\nAdding switch for postprocessing that eta should be applied to both rows and cols ... ')#
+	processed_data$stan_data$with_eta2 <- 1	#
+}#
+if( args$with_inits_20_54 )#
+{#
+	cat('\nAdding inits A array for 20 to 54 year olds ... ')#
+	processed_data <- process_covariates_add_initA_array_20_54(processed_data)	 	#
+}
+stan_data <- processed_data$stan_data#
+dates <- processed_data$dates#
+deaths_by_state <- processed_data$deaths_by_state#
+reported_cases <- processed_data$reported_cases#
+pop_info <- add_date_to_pop_info(pop_info,stan_data,args$states,dates)
+str(stan_data)
+as.logical(0)
+unlist(strsplit("AL,AZ,CA,CO,CT,FL,GA,IL,IN,LA,MA,MD,MI,MS,NC,NJ,NYC,TN,WA",','))
+length(unlist(strsplit("AL,AZ,CA,CO,CT,FL,GA,IL,IN,LA,MA,MD,MI,MS,NC,NJ,NYC,TN,WA",',')))
+require(data.table)#
+#
+## important note:#
+# the combination of stanModelFile and job_tag should be unique for each analysis#
+# all outputs with stanModelFile-job_tag are assumed to be several HMC chains run in parallel#
+#
+#	function to make PBS header#
+make.PBS.header <- function(hpc.walltime=47, hpc.select=1, hpc.nproc=1, hpc.mem= "6gb", hpc.load= "module load anaconda3/personal\nsource activate covid19model", hpc.q="pqcovid19c", hpc.array=1 )#
+{	#
+	pbshead <- "#!/bin/sh"#
+	tmp <- paste("#PBS -l walltime=", hpc.walltime, ":59:00", sep = "")#
+	pbshead <- paste(pbshead, tmp, sep = "\n")#
+	tmp <- paste("#PBS -l select=", hpc.select, ":ncpus=", hpc.nproc,":ompthreads=", hpc.nproc,":mem=", hpc.mem, sep = "")	#
+	pbshead <- paste(pbshead, tmp, sep = "\n")#
+	pbshead <- paste(pbshead, "#PBS -j oe", sep = "\n")#
+	if(hpc.array>1)#
+	{#
+		pbshead	<- paste(pbshead, "\n#PBS -J 1-", hpc.array, sep='')#
+	}				#
+	if(!is.na(hpc.q))#
+	{#
+		pbshead <- paste(pbshead, paste("#PBS -q", hpc.q), sep = "\n")#
+	}		#
+	pbshead	<- paste(pbshead, hpc.load, sep = "\n")#
+	pbshead#
+}
+countries <- "CO,CT,FL,NYC"#
+	countries <- "AL,AZ,CA,CO,CT,FL,GA,IL,IN,LA,MA,MD,MI,MS,NC,NJ,NYC,TN,WA"#
+	n_countries <- length(unlist(strsplit(countries,',')))#
+	hpc.nproc.cmdstan <- n_countries#
+	args <- data.table(#
+			source_dir= '~/git/R0t',#
+			cmdstan_dir = '~/sandbox/cmdstan-2.23.0',#
+			out_dir= '~/sandbox',						#
+			report_dir = '~/sandbox',#
+			#source_dir= '/rds/general/user/or105/home/libs/R0t',#
+			#cmdstan_dir = '/apps/cmdstan/2.33.0',#
+			#out_dir= '/rds/general/project/ratmann_covid19/live/age_renewal_usa',	#
+			#report_dir = '/rds/general/project/ratmann_covid19/live/age_renewal_usa/reports',	#
+			script_file= 'usa/code/base-ages-google-mobility-usa.r',#
+			script_converting_file = "utils/convert_csv_to_rda.r",#
+			script_generate_quantities_file = "base-ages-generate-quantities.r",#
+			script_rmd_file = paste0("usa/code/postprocessing/post-processing-make-report-",n_countries,"states.Rmd"),#
+			stanModelFile= 'base_age_fsq_mobility_200703f_cmdstanv',#
+			seed= 42,#
+			chain= 1,#
+			job_tag= '19states_devcntct_newpostpr',#
+			dummy= 1L,#
+			cntct_by = 5,#
+			use.only.contact.uk = TRUE, #
+			countries = countries,	#
+			seedAge = 7L,#
+			ovrcnt = 1L,#
+			cmdstan = 1L,#
+			country_contact = "United_Kingdom"#
+			)
+if(exists('hpc.nproc.cmdstan'))#
+{#
+	stopifnot( hpc.nproc.cmdstan<=length(unlist(strsplit(args$countries, split=','))) )	#
+}#
+#
+if(1)#
+{#
+  tmp <- data.table(chain=1:8)		#
+  tmp[, seed:= round(runif(seq_len(nrow(tmp)))*1e6)]		#
+  set(args, NULL, colnames(tmp), NULL)#
+  tmp[, dummy:= 1L]#
+  args <- merge(args, tmp, by='dummy')#
+  set(args, NULL, 'dummy', NULL)	#
+}
+cmds <- vector('list', nrow(args))#
+for(i in seq_len(nrow(args)))#
+{#
+	cmd				<- ''			#
+	#	general housekeeping#
+	cmd				<- paste0(cmd,"CWD=$(pwd)\n")#
+	cmd				<- paste0(cmd,"echo $CWD\n")	#
+	tmpdir.prefix	<- paste0('cvd_',format(Sys.time(),"%y-%m-%d-%H-%M-%S"))#
+	tmpdir			<- paste0("$CWD/",tmpdir.prefix)#
+	cmd				<- paste0(cmd,"mkdir -p ",tmpdir,'\n')#
+	cmd				<- paste0(cmd,'cp -R ',args$source_dir[i],' .\n')#
+	#	generate data set and run if not using cmdstan#
+	cmd 			<- paste0( cmd, 'echo "----------- Generating input data: ------------"\n')#
+	tmp 			<- paste0('Rscript ', file.path('$CWD',basename(args$source_dir[i]),args$script_file[i]), #
+							' -stanModelFile "', args$stanModelFile[i],'"',#
+							' -seed ', args$seed[i],#
+							' -chain ', args$chain[i],#
+							' -indir ', file.path('$CWD',basename(args$source_dir[i])),'',#
+							' -outdir ', tmpdir,'',#
+							' -jobtag "', args$job_tag[i],'"',#
+							' -cntct_by ', args$cntct_by[i],#
+							' -use.only.contact.uk ', args$use.only.contact.uk[i],#
+							' -countries "', args$countries[i],'"',#
+							' -seedAge ', args$seedAge[i],#
+							' -cmdstan ', args$cmdstan[i],#
+							' -ovrcnt ', args$ovrcnt[i],#
+							' -country_contact "', args$country_contact[i],'"'#
+							)#
+	cmd				<- paste0(cmd, tmp, '\n')#
+	#	if using cmdstan#
+	if(args$cmdstan[i]==1)#
+	{#
+		#	clean up any existing model code#
+		cmd <- paste0(cmd, 'rm ', file.path(basename(args$source_dir[i]),'stan-models',args$stanModelFile[i]), ' \n')#
+		cmd <- paste0(cmd, 'rm ', file.path(basename(args$source_dir[i]),'stan-models',paste0(args$stanModelFile[i], '.d')),' \n')#
+		cmd <- paste0(cmd, 'rm ', file.path(basename(args$source_dir[i]),'stan-models',paste0(args$stanModelFile[i], '.hpp')),' \n')#
+		cmd <- paste0(cmd, 'rm ', file.path(basename(args$source_dir[i]),'stan-models',paste0(args$stanModelFile[i], '.o')),' \n')#
+		#	build model#
+		cmd <- paste0( cmd, 'echo "----------- Building Stan model file: ------------"\n')#
+		cmd <- paste0(cmd, 'cd ', args$cmdstan_dir[i], '\n')#
+		cmd <- paste0(cmd, 'make ', file.path('$CWD',basename(args$source_dir[i]),'stan-models',args$stanModelFile[i]), ' \n')#
+		cmd <- paste0(cmd, 'cd $CWD\n')#
+		#	set up env variables#
+		cmd <- paste0( cmd, 'JOB_DIR=$(ls -d "',tmpdir,'"/*)\n')#
+		cmd <- paste0( cmd, 'JOB_DIR_NAME=${JOB_DIR##*/}\n')#
+		cmd <- paste0( cmd, 'STAN_DATA_FILE=$(find ', tmpdir, ' -name "*cmdstanin.R")\n')#
+		cmd <- paste0( cmd, 'STAN_INIT_FILE=$(find ', tmpdir, ' -name "*cmdstaninit.R")\n')#
+		cmd <- paste0( cmd, 'STAN_OUT_FILE=', file.path('$JOB_DIR','${JOB_DIR##*/}_stanout.csv'),' \n')#
+		#	run model#
+		cmd <- paste0( cmd, 'echo "----------- env variables are: ------------"\n')#
+		cmd <- paste0( cmd, 'echo $JOB_DIR\n')#
+		cmd <- paste0( cmd, 'echo $JOB_DIR_NAME\n')#
+		cmd <- paste0( cmd, 'echo $STAN_DATA_FILE\n')#
+		cmd <- paste0( cmd, 'echo $STAN_OUT_FILE\n')#
+		cmd <- paste0( cmd, 'echo "----------- Starting Stan sampling: ------------"\n')#
+		#	#
+		tmp <- paste0( file.path(basename(args$source_dir[i]),'stan-models',args$stanModelFile[i]),' ',#
+		                 'sample num_samples=2000 num_warmup=1500 save_warmup=0 thin=1 ',#
+		                 'adapt delta=0.95 ',#
+		                 'algorithm=hmc engine=nuts max_depth=15 stepsize=0.01 ',#
+		                 'data file=$STAN_DATA_FILE ',#
+		                 'init=$STAN_INIT_FILE ',#
+		                 'random seed=',args$seed[i],' ',#
+		                 'output file=$STAN_OUT_FILE' )#
+		cmd <- paste0(cmd, tmp, '\n')#
+	}		#
+	# convert csv to rdata#
+	cmd		<- paste0( cmd, 'echo "----------- Converting Stan output to RDA file: ------------"\n')#
+	tmp		<- paste0('Rscript ', file.path('$CWD',basename(args$source_dir[i]),args$script_converting_file[i]), #
+				' -csv_file "', "$STAN_OUT_FILE",'"',#
+	        	' -rda_file "', file.path('$JOB_DIR','${JOB_DIR##*/}_stanout.RData'),'"'#
+				)#
+	cmd		<- paste0(cmd, tmp, '\n')#
+	#	general housekeeping#
+	cmd 	<- paste0( cmd, 'echo "----------- Copy files to out directory: ------------"\n')#
+	tmpdir2	<- file.path(args$out_dir[i], paste0(args$stanModelFile[i],'-',args$job_tag[i]))#
+	if(i==1)#
+	{#
+		dir.create(tmpdir2)	#
+	}	#
+	cmd		<- paste0(cmd,"mkdir -p ",tmpdir2,'\n')#
+	cmd		<- paste0(cmd, 'cp -R --no-preserve=mode,ownership "', tmpdir,'"/* ', tmpdir2,'\n')#
+	cmd		<- paste0(cmd, 'chmod -R g+rw ', tmpdir2,'\n')#
+	cmd		<- paste(cmd, "rm -rf ", tmpdir,'\n',sep='')#
+	#	generate quantities #
+	cmd <- paste0( cmd, 'echo "----------- Generating quantities: ------------"\n')#
+	cmd <- paste0( cmd, 'JOB_DIR2="',tmpdir2,'"/"$JOB_DIR_NAME" \n')#
+	cmd <- paste0( cmd, 'echo $JOB_DIR2\n')#
+	tmp <- length(unlist(strsplit(args$countries[i], split=',')))#
+	cmd <- paste0( cmd, paste0("echo {1..",tmp,"} | tr ' ' '\\n' | ") )#
+	tmp <- ifelse(args$cmdstan[i]==1, hpc.nproc.cmdstan, 1)#
+	stopifnot(is.numeric(tmp))#
+	cmd <- paste0( cmd, paste0('xargs -P ',tmp,' -n 1 -I {} ') )#
+	tmp <- paste0('Rscript ', file.path('"$CWD"',basename(args$source_dir[i]),args$script_generate_quantities_file[i]),#
+				' -indir.code ',file.path('"$CWD"',basename(args$source_dir[i])),#
+				' -indir.results "$JOB_DIR2"',#
+				' -location.index {}',#
+				' -with.flow 1')		#
+	cmd <- paste0(cmd, tmp,'\n')	#
+	#	make post-processing PBS script#
+	if(1 && i==1)#
+	{#
+		cmd2 <- make.PBS.header(	hpc.walltime=23, #
+				hpc.select=1, #
+				hpc.nproc=1, #
+				hpc.mem= "250gb", #
+				hpc.load= "module load anaconda3/personal\nsource activate covid19model", #
+				hpc.q="pqcovid19c", #
+				hpc.array= 1)#
+		cmd2 <- paste0(cmd2,'\n')#
+		# save posterior samples#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],args$script_save_posterior_samples_file[i]), #
+		    ' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"',#
+				' -numb_chains ', max(args$chain)#
+				)#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# assess mixing#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],args$script_assess_mixing_file[i]), #
+		               ' -script_dir ', args$source_dir[i],#
+		               ' -stanModelFile "', args$stanModelFile[i],'"',#
+		               ' -out_dir ', tmpdir2,#
+		               ' -job_tag "', args$job_tag[i],'"',#
+		               ' -numb_chains ', max(args$chain)#
+						)#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing  state-pars#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-state-pars.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+		)		#
+		cmd2		<- paste0(cmd2,tmp,'\n')		#
+		# postprocessing  age-pars#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-age-pars.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+				)		#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing  flows#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-flows.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+				)		#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing  etas#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-etas.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+				)		#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing  make cases-deaths-Rt plot#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-make-newcases-overalldeaths-Rt-plot.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+				)		#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing panels#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-panels.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+				)#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing knit report#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-knit-report.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"',#
+				' -rmd_file "', args$script_rmd_file[i],'"',#
+				' -report_dir "', args$report_dir[i],'"'						#
+				)#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# write submission file	#
+		post.processing.file <- file.path(tmpdir2, 'post_processing.sh')#
+		cat(cmd2, file=post.processing.file)#
+		# set permissions#
+		Sys.chmod(post.processing.file, mode='644')				#
+	}	#
+	#	schedule post-processing	#
+	cmd		<- paste0( cmd, 'echo "----------- Post-processing: ------------"\n')#
+	tmp		<- paste("if [ $(find ",tmpdir2,"* -name '*_stanout.RData' | wc -l) -ge ",max( args$chain )," ]; then\n",sep='')#
+	cmd		<- paste(cmd,tmp,sep='')	#
+	cmd 	<- paste0(cmd, '\tcd ', dirname(post.processing.file),'\n')#
+	cmd 	<- paste0(cmd,'\tqsub ', basename(post.processing.file),'\n')	#
+	cmd		<- paste0(cmd,"fi\n")#
+	cmd		<- paste(cmd, "rm -rf $CWD/", basename(args$source_dir[i]),'\n',sep='')#
+	cat(cmd)#
+	cmds[[i]]	<- cmd#
+}
+cat(cmds[[1]])
+cmds <- vector('list', nrow(args))#
+for(i in seq_len(nrow(args)))#
+{#
+	cmd				<- ''			#
+	#	general housekeeping#
+	cmd				<- paste0(cmd,"CWD=$(pwd)\n")#
+	cmd				<- paste0(cmd,"echo $CWD\n")	#
+	tmpdir.prefix	<- paste0('cvd_',format(Sys.time(),"%y-%m-%d-%H-%M-%S"))#
+	tmpdir			<- paste0("$CWD/",tmpdir.prefix)#
+	cmd				<- paste0(cmd,"mkdir -p ",tmpdir,'\n')#
+	cmd				<- paste0(cmd,'cp -R ',args$source_dir[i],' .\n')#
+	#	generate data set and run if not using cmdstan#
+	cmd 			<- paste0( cmd, 'echo "----------- Generating input data: ------------"\n')#
+	tmp 			<- paste0('Rscript ', file.path('$CWD',basename(args$source_dir[i]),args$script_file[i]), #
+							' -stanModelFile "', args$stanModelFile[i],'"',#
+							' -seed ', args$seed[i],#
+							' -chain ', args$chain[i],#
+							' -indir ', file.path('$CWD',basename(args$source_dir[i])),'',#
+							' -outdir ', tmpdir,'',#
+							' -jobtag "', args$job_tag[i],'"',#
+							' -cntct_by ', args$cntct_by[i],#
+							' -use.only.contact.uk ', args$use.only.contact.uk[i],#
+							' -countries "', args$countries[i],'"',#
+							' -seedAge ', args$seedAge[i],#
+							' -cmdstan ', args$cmdstan[i],#
+							' -ovrcnt ', args$ovrcnt[i],#
+							' -country_contact "', args$country_contact[i],'"'#
+							)#
+	cmd				<- paste0(cmd, tmp, '\n')#
+	#	if using cmdstan#
+	if(args$cmdstan[i]==1)#
+	{#
+		#	clean up any existing model code#
+		cmd <- paste0(cmd, 'rm ', file.path(basename(args$source_dir[i]),'stan-models',args$stanModelFile[i]), ' \n')#
+		cmd <- paste0(cmd, 'rm ', file.path(basename(args$source_dir[i]),'stan-models',paste0(args$stanModelFile[i], '.d')),' \n')#
+		cmd <- paste0(cmd, 'rm ', file.path(basename(args$source_dir[i]),'stan-models',paste0(args$stanModelFile[i], '.hpp')),' \n')#
+		cmd <- paste0(cmd, 'rm ', file.path(basename(args$source_dir[i]),'stan-models',paste0(args$stanModelFile[i], '.o')),' \n')#
+		#	build model#
+		cmd <- paste0( cmd, 'echo "----------- Building Stan model file: ------------"\n')#
+		cmd <- paste0(cmd, 'cd ', args$cmdstan_dir[i], '\n')#
+		cmd <- paste0(cmd, 'make ', file.path('$CWD',basename(args$source_dir[i]),'stan-models',args$stanModelFile[i]), ' \n')#
+		cmd <- paste0(cmd, 'cd $CWD\n')#
+		#	set up env variables#
+		cmd <- paste0( cmd, 'JOB_DIR=$(ls -d "',tmpdir,'"/*)\n')#
+		cmd <- paste0( cmd, 'JOB_DIR_NAME=${JOB_DIR##*/}\n')#
+		cmd <- paste0( cmd, 'STAN_DATA_FILE=$(find ', tmpdir, ' -name "*cmdstanin.R")\n')#
+		cmd <- paste0( cmd, 'STAN_INIT_FILE=$(find ', tmpdir, ' -name "*cmdstaninit.R")\n')#
+		cmd <- paste0( cmd, 'STAN_OUT_FILE=', file.path('$JOB_DIR','${JOB_DIR##*/}_stanout.csv'),' \n')#
+		#	run model#
+		cmd <- paste0( cmd, 'echo "----------- env variables are: ------------"\n')#
+		cmd <- paste0( cmd, 'echo $JOB_DIR\n')#
+		cmd <- paste0( cmd, 'echo $JOB_DIR_NAME\n')#
+		cmd <- paste0( cmd, 'echo $STAN_DATA_FILE\n')#
+		cmd <- paste0( cmd, 'echo $STAN_OUT_FILE\n')#
+		cmd <- paste0( cmd, 'echo "----------- Starting Stan sampling: ------------"\n')#
+		#	#
+		tmp <- paste0( file.path(basename(args$source_dir[i]),'stan-models',args$stanModelFile[i]),' ',#
+		                 'sample num_samples=2000 num_warmup=1500 save_warmup=0 thin=1 ',#
+		                 'adapt delta=0.95 ',#
+		                 'algorithm=hmc engine=nuts max_depth=15 stepsize=0.01 ',#
+		                 'data file=$STAN_DATA_FILE ',#
+		                 'init=$STAN_INIT_FILE ',#
+		                 'random seed=',args$seed[i],' ',#
+		                 'output file=$STAN_OUT_FILE' )#
+		cmd <- paste0(cmd, tmp, '\n')#
+	}		#
+	# convert csv to rdata#
+	cmd		<- paste0( cmd, 'echo "----------- Converting Stan output to RDA file: ------------"\n')#
+	tmp		<- paste0('Rscript ', file.path('$CWD',basename(args$source_dir[i]),args$script_converting_file[i]), #
+				' -csv_file "', "$STAN_OUT_FILE",'"',#
+	        	' -rda_file "', file.path('$JOB_DIR','${JOB_DIR##*/}_stanout.RData'),'"'#
+				)#
+	cmd		<- paste0(cmd, tmp, '\n')#
+	#	general housekeeping#
+	cmd 	<- paste0( cmd, 'echo "----------- Copy files to out directory: ------------"\n')#
+	tmpdir2	<- file.path(args$out_dir[i], paste0(args$stanModelFile[i],'-',args$job_tag[i]))#
+	if(i==1)#
+	{#
+		dir.create(tmpdir2)	#
+	}	#
+	cmd		<- paste0(cmd,"mkdir -p ",tmpdir2,'\n')#
+	cmd		<- paste0(cmd, 'cp -R --no-preserve=mode,ownership "', tmpdir,'"/* ', tmpdir2,'\n')#
+	cmd		<- paste0(cmd, 'chmod -R g+rw ', tmpdir2,'\n')#
+	cmd		<- paste(cmd, "rm -rf ", tmpdir,'\n',sep='')#
+	#	generate quantities #
+	cmd <- paste0( cmd, 'echo "----------- Generating quantities: ------------"\n')#
+	cmd <- paste0( cmd, 'JOB_DIR2="',tmpdir2,'"/"$JOB_DIR_NAME" \n')#
+	cmd <- paste0( cmd, 'echo $JOB_DIR2\n')#
+	tmp <- length(unlist(strsplit(args$countries[i], split=',')))#
+	cmd <- paste0( cmd, paste0("echo {1..",tmp,"} | tr ' ' '\\n' | ") )#
+	tmp <- ifelse(args$cmdstan[i]==1, hpc.nproc.cmdstan, 1)#
+	stopifnot(is.numeric(tmp))#
+	cmd <- paste0( cmd, paste0('xargs -P ',tmp,' -n 1 -I {} ') )#
+	tmp <- paste0('Rscript ', file.path('"$CWD"',basename(args$source_dir[i]),args$script_generate_quantities_file[i]),#
+				' -indir.code ',file.path('"$CWD"',basename(args$source_dir[i])),#
+				' -indir.results "$JOB_DIR2"',#
+				' -location.index {}',#
+				' -with.flow 1')		#
+	cmd <- paste0(cmd, tmp,'\n')	#
+	#	make post-processing PBS script#
+	if(1 && i==1)#
+	{#
+		cmd2 <- make.PBS.header(	hpc.walltime=23, #
+				hpc.select=1, #
+				hpc.nproc=1, #
+				hpc.mem= "250gb", #
+				hpc.load= "module load anaconda3/personal\nsource activate covid19model", #
+				hpc.q="pqcovid19c", #
+				hpc.array= 1)#
+		cmd2 <- paste0(cmd2,'\n')#
+		# save posterior samples#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','save-posterior-samples.R'), #
+		    ' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"',#
+				' -numb_chains ', max(args$chain)#
+				)#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# assess mixing#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','assess-mixing.R'), #
+		               ' -script_dir ', args$source_dir[i],#
+		               ' -stanModelFile "', args$stanModelFile[i],'"',#
+		               ' -out_dir ', tmpdir2,#
+		               ' -job_tag "', args$job_tag[i],'"',#
+		               ' -numb_chains ', max(args$chain)#
+						)#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing  state-pars#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-state-pars.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+		)		#
+		cmd2		<- paste0(cmd2,tmp,'\n')		#
+		# postprocessing  age-pars#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-age-pars.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+				)		#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing  flows#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-flows.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+				)		#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing  etas#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-etas.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+				)		#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing  make cases-deaths-Rt plot#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-make-newcases-overalldeaths-Rt-plot.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+				)		#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing panels#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-panels.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"'#
+				)#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# postprocessing knit report#
+		tmp		<- paste0('Rscript ', file.path(args$source_dir[i],'usa','code','postprocessing','post-processing-knit-report.R'),#
+				' -script_dir ', args$source_dir[i],#
+				' -stanModelFile "', args$stanModelFile[i],'"',#
+				' -out_dir ', tmpdir2,#
+				' -job_tag "', args$job_tag[i],'"',#
+				' -rmd_file "', args$script_rmd_file[i],'"',#
+				' -report_dir "', args$report_dir[i],'"'						#
+				)#
+		cmd2		<- paste0(cmd2,tmp,'\n')#
+		# write submission file	#
+		post.processing.file <- file.path(tmpdir2, 'post_processing.sh')#
+		cat(cmd2, file=post.processing.file)#
+		# set permissions#
+		Sys.chmod(post.processing.file, mode='644')				#
+	}	#
+	#	schedule post-processing	#
+	cmd		<- paste0( cmd, 'echo "----------- Post-processing: ------------"\n')#
+	tmp		<- paste("if [ $(find ",tmpdir2,"* -name '*_stanout.RData' | wc -l) -ge ",max( args$chain )," ]; then\n",sep='')#
+	cmd		<- paste(cmd,tmp,sep='')	#
+	cmd 	<- paste0(cmd, '\tcd ', dirname(post.processing.file),'\n')#
+	cmd 	<- paste0(cmd,'\tqsub ', basename(post.processing.file),'\n')	#
+	cmd		<- paste0(cmd,"fi\n")#
+	cmd		<- paste(cmd, "rm -rf $CWD/", basename(args$source_dir[i]),'\n',sep='')#
+	cat(cmd)#
+	cmds[[i]]	<- cmd#
+}
+8*4*3 + 8*19*2
+1/40
+1/0.1
+1/0.2
+1/0.75
+1/50
+1/33
+0.5 * sqrt(2/pi)
+1 * sqrt(2/pi)
+5/6
+5/7
+5/5.5
+7/8
+devtools::install_github(“rundel/ghclass”)
+devtools::install_github("rundel/ghclass")
+install.packages("googlesheets4")
+library(data.table)#
+library(bayesplot)#
+library(ggplot2)#
+library(tidyverse)#
+library(RColorBrewer)#
+library(scales)#
+library(ggpubr)#
+library(gridExtra)#
+library(cowplot)#
+library(magick)#
+library(viridis)#
+#
+#	for dev purposes#
+if(1)#
+{	#
+	args_dir <- list()#
+	args_dir[['script_dir']] <- '~/git/R0t'#
+	args_dir[['stanModelFile']] <- 'base_age_fsq_mobility_200703f_cmdstanv'#
+	args_dir[['out_dir']] <- '/Users/or105/Box/OR_Work/2020/2020_covid/age_renewal_usa/base_age_fsq_mobility_200703f_cmdstanv-19states_devcntct_newpostpr'#
+	args_dir[['job_tag']] <- '19states_devcntct_newpostpr'	#
+}
+## start script#
+cat(" \n -------------------------------- \n with post-processing arguments \n -------------------------------- \n")#
+str(args_dir)#
+#
+outfile.base <- paste0(args_dir$out_dir, "/",#
+											 args_dir$stanModelFile , "-", args_dir$job_tag)#
+#
+#	load post-processing functions#
+file <- file.path(args_dir$script_dir, "usa","code","postprocessing","post-processing-plot-functions.r")#
+cat("\n source file:", file)#
+source(file)#
+#
+file <- file.path(args_dir$script_dir, "usa","code","postprocessing","post-processing-summary-functions.r")#
+cat("\n source file:", file)#
+source(file)
+# load inputs for this script#
+file <- paste0(outfile.base,'-stanout-basic.RDS')#
+cat("\n read RDS:", file)#
+plot.pars.basic <- readRDS(file)#
+#
+file <- paste0(outfile.base,'-stanout-deathscases-gqs.RDS')#
+cat("\n read RDS:", file)#
+plot.pars.dcs <- readRDS(file)
+Rt_byage_c <- summarise_Rt_byage_c( age_cat_map,#
+		plot.pars.basic$pop_info,#
+		plot.pars.dcs$RtByAge,#
+		plot.pars.basic$dc,#
+		plot.pars.basic$da)
+age_cat_map <- make_age_cat_map_7(plot.pars.basic$pop_info)
+Rt_byage_c <- summarise_Rt_byage_c( age_cat_map,#
+		plot.pars.basic$pop_info,#
+		plot.pars.dcs$RtByAge,#
+		plot.pars.basic$dc,#
+		plot.pars.basic$da)
+attach(plot.pars.basic)
+RtByAge<- plot.pars.dcs$RtByAge
+dim(RtByAge)
+m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		#	select data from large table#
+		dr_m <- as.data.table( reshape2::melt( RtByAge[,m,,] ) )
+dr_m
+dt <- as.data.table( reshape2::melt( RtByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))
+dt
+13*50
+pop_info
+dc
+subset(pop_info, loc==regions[m], select=c( age.cat, prop_pop))
+age_cat_map
+tmp <- subset(pop_info, loc==regions[m], select=c( age.cat, prop_pop))#
+		merge(tmp, subset(age_cat_map, select=c(age.cat2, age.cat)), by='age.cat')
+tmp <- merge(tmp, subset(age_cat_map, select=c(age.cat2, age.cat)), by='age.cat')
+dt
+setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))
+tmp
+dt <- merge(dt, tmp, by='age_cat')
+dt
+str(tmp)
+tmp
+tmp[, list(age_cat_2= age_cat_2,#
+						prop_pop2= prop_pop/sum(prop_pop)), by='age_cat']
+tmp[, list(age_cat2= age_cat2,#
+						prop_pop2= prop_pop/sum(prop_pop)), by='age_cat']
+tmp[, list(age_cat= age_cat,#
+						prop_pop2= prop_pop/sum(prop_pop)), by='age_cat2']
+dt <- as.data.table( reshape2::melt( RtByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		#	minimise merging. so we make a few low dim steps now#
+		#	we also only take the absolute minimum columns that we need#
+		#	ie the age.cat.labels are just exhausting memory#
+		tmp <- subset(pop_info, loc==regions[m], select=c( age.cat, prop_pop))#
+		tmp <- merge(tmp, subset(age_cat_map, select=c(age.cat2, age.cat)), by='age.cat')#
+		setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))#
+		#	to avoid millions of divisions we precompute the weights now#
+		tmp <- tmp[, list(age_cat= age_cat,#
+						prop_pop2= prop_pop/sum(prop_pop)), #
+						by='age_cat2']
+tmp
+dt <- merge(dt, tmp, by='age_cat')
+dt
+dt <- dt[, list(value=sum(prop_pop2*value)), by=c('age_cat2','time','iterations')]
+dt <- dt[, list(value=sum(prop_pop2*value)), by=c('age_cat2','time','iteration')]
+dt
+dt <- dt[, list(q= quantile(value, prob=ps),#
+						p= p_labs), #
+						by=c('time','region','age_cat2')]
+dt <- dt[, list(q= quantile(value, prob=ps),#
+						p= p_labs), #
+						by=c('time','age_cat2')]
+ps <- c(0.5, 0.025, 0.975)#
+	p_labs <- c('M','CL','CU')
+dt <- dt[, list(q= quantile(value, prob=ps),#
+						p= p_labs), #
+						by=c('time','age_cat2')]
+dt
+dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]
+tmp
+dt <- merge(dt, tmp, by='time')
+dt
+ans <- vector('list',length(regions))  #
+	#	loop over locations for speed. very hard to take quantiles on such large data#
+	for(m in seq_along(regions))#
+	{#
+		#m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		#	select data from large table here#
+		#	no reshape outside the loop #
+		dt <- as.data.table( reshape2::melt( RtByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		#	minimise merging. so we make a few low dim steps now#
+		#	we also only take the absolute minimum columns that we need#
+		#	ie the age.cat.labels are just exhausting memory#
+		tmp <- subset(pop_info, loc==regions[m], select=c( age.cat, prop_pop))#
+		tmp <- merge(tmp, subset(age_cat_map, select=c(age.cat2, age.cat)), by='age.cat')#
+		setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))#
+		#	to avoid millions of divisions we precompute the weights now#
+		tmp <- tmp[, list(age_cat= age_cat,#
+						prop_pop2= prop_pop/sum(prop_pop)), #
+						by='age_cat2']#
+		#	one big merge using integers as key -- this is now fast#
+		dt <- merge(dt, tmp, by='age_cat')#
+		# 	aggregate Rt by age groups c#
+		dt <- dt[, list(value=sum(prop_pop2*value)), by=c('age_cat2','time','iteration')]	#
+		#	summarise#
+		dt <- dt[, list(q= quantile(value, prob=ps),#
+						p= p_labs), #
+						by=c('time','age_cat2')]#
+		#	add loc #
+		dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]#
+		dt <- merge(dt, tmp, by='time')#
+		# build new data object only after summarised#
+		ans[[m]] <- copy(dt)		#
+	}
+ans <- do.call('rbind',ans)
+ans
+tmp <- unique(subset(pop_info, select=c(loc, loc_label)))#
+	ans <- merge(ans, tmp, by='loc')
+ans
+merge(ans, unique(subset(age_cat_map,select=c('age.cat2','age.cat2.label'))), by.x=c('age_cat2'), by.y=c('age.cat2'))
+merge(unique(subset(age_cat_map,select=c('age.cat2','age.cat2.label'))), ans, by.y=c('age_cat2'), by.x=c('age.cat2'))
+ans <- merge(unique(subset(age_cat_map,select=c('age.cat2','age.cat2.label'))), ans, by.y=c('age_cat2'), by.x=c('age.cat2'))
+ans
+setnames(ans,'p','q_label')
+dcast.data.table(ans, loc + loc_label + age.cat2 + age.cat2.label + time + date ~ q_label, value.var='q')
+ans <- dcast.data.table(ans, loc + loc_label + age.cat2 + age.cat2.label + time + date ~ q_label, value.var='q')
+ans
+Rt_byage_c <- copy(ans)
+paste0(outfile.base,'-Rt_byage.RDS')
+file <- paste0(outfile.base,'-Rt_byage.RDS')
+file.exist(file)
+file.exists(file)
+casesByAge <- plot.pars.dcs$E_casesByAge
+dim(casesByAge)
+m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		dc <- as.data.table( reshape2::melt( casesByAge[,m,,] ) )#
+		setnames(dc, 1:5, c('iteration','time','age_cat','value'))
+setnames(dc, 1:4, c('iteration','time','age_cat','value'))
+dc
+dt <- as.data.table( reshape2::melt( casesByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		tmp <- subset(age_cat_map, select=c(age.cat2, age.cat))
+tmp
+setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))
+tmp
+dt
+dt <- merge(dt, tmp, by='age_cat')
+dt
+dt <- dt[, list(value=sum(value)), by=c('age_cat2','time','iteration')]
+dt
+dt <- dt[, list( 	q= quantile(value, prob=ps),#
+						q_label=p_labs), #
+						by=c('time','age_cat2')]
+dt
+dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]#
+		dt <- merge(dt, tmp, by='time')#
+		# build new data object only after summarised#
+		ans[[m]] <- copy(dt)
+ans <- vector('list',length(regions))
+ans <- vector('list',length(regions))  #
+	#	loop over locations for speed. very hard to take quantiles on such large data#
+	for(m in seq_along(regions))#
+	{#
+		#m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		dt <- as.data.table( reshape2::melt( casesByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		tmp <- subset(age_cat_map, select=c(age.cat2, age.cat))#
+		setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))#
+		#	one big merge using integers as key -- this is now fast#
+		dt <- merge(dt, tmp, by='age_cat')#
+		# 	aggregate Rt by age groups c#
+		dt <- dt[, list(value=sum(value)), by=c('age_cat2','time','iteration')]	#
+		#	summarise		#
+		dt <- dt[, list( 	q= quantile(value, prob=ps),#
+						q_label=p_labs), #
+						by=c('time','age_cat2')]		#
+		#	add loc #
+		dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]#
+		dt <- merge(dt, tmp, by='time')#
+		# build new data object only after summarised#
+		ans[[m]] <- copy(dt)#
+	}#
+	ans <- do.call('rbind',ans)
+ans
+tmp <- unique(subset(pop_info, select=c(loc, loc_label)))#
+	ans <- merge(ans, tmp, by='loc')#
+	ans <- merge(unique(subset(age_cat_map,select=c('age.cat2','age.cat2.label'))), ans, by.y=c('age_cat2'), by.x=c('age.cat2'))
+ans
+ans <- dcast.data.table(ans, loc + loc_label + age.cat2 + age.cat2.label + time + date ~ q_label, value.var='q')#
+	ans
+m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		dt <- as.data.table( reshape2::melt( casesByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		tmp <- subset(age_cat_map, select=c(age.cat2, age.cat))#
+		setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))#
+		#	one big merge using integers as key -- this is now fast#
+		dt <- merge(dt, tmp, by='age_cat')#
+		# 	aggregate Rt by age groups c#
+		dt <- dt[, list(value=sum(value)), by=c('age_cat2','time','iteration')]
+dt
+setkey(age_cat2, time)
+setkey(dt, age_cat2, time)
+dt
+setkey(dt, iteration, age_cat2, time)
+dt
+dt <- dt[, list(time=time, value=cumsum(value)), by=c('iteration','age_cat2')]
+dt
+dt <- dt[, list( 	q= quantile(value, prob=ps),#
+						q_label=p_labs), #
+						by=c('time','age_cat2')]		#
+		#	add loc #
+		dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]#
+		dt <- merge(dt, tmp, by='time')
+dt
+ans <- vector('list',length(regions))  #
+	#	loop over locations for speed. very hard to take quantiles on such large data#
+	for(m in seq_along(regions))#
+	{#
+		#m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		dt <- as.data.table( reshape2::melt( casesByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		tmp <- subset(age_cat_map, select=c(age.cat2, age.cat))#
+		setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))#
+		#	one big merge using integers as key -- this is now fast#
+		dt <- merge(dt, tmp, by='age_cat')#
+		# 	aggregate Rt by age groups c#
+		dt <- dt[, list(value=sum(value)), by=c('age_cat2','time','iteration')]	#
+		# 	cumsum#
+		setkey(dt, iteration, age_cat2, time)#
+		dt <- dt[, list(time=time, value=cumsum(value)), by=c('iteration','age_cat2')]	#
+		#	summarise		#
+		dt <- dt[, list( 	q= quantile(value, prob=ps),#
+						q_label=p_labs), #
+						by=c('time','age_cat2')]		#
+		#	add loc #
+		dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]#
+		dt <- merge(dt, tmp, by='time')#
+		# build new data object only after summarised#
+		ans[[m]] <- copy(dt)#
+	}#
+	ans <- do.call('rbind',ans)
+ans
+tmp <- unique(subset(pop_info, select=c(loc, loc_label)))#
+	ans <- merge(ans, tmp, by='loc')#
+	ans <- merge(unique(subset(age_cat_map,select=c('age.cat2','age.cat2.label'))), ans, by.y=c('age_cat2'), by.x=c('age.cat2'))
+ans
+ans <- dcast.data.table(ans, loc + loc_label + age.cat2 + age.cat2.label + time + date ~ q_label, value.var='q')
+ans
+setnames(ans, c('age.cat2','age.cat2.label'), c('age','age_band'))
+ans
+e_acases_byage_c <- copy(ans)
+file <- paste0(outfile.base,'-cases-age.RDS')
+cat("\nWrite ",file," ... ")#
+	saveRDS(e_acases_byage_c, file=file)
+pop_info
+tmp <- subset(pop_info,select=c(loc, age.cat, age.cat.label, pop, pop_total, prop_pop))#
+	tmp <- merge(tmp,age_cat_map,by=c('age.cat','age.cat.label'))
+tmp
+tmp <- subset(pop_info,select=c(loc, age.cat, age.cat.label, pop))#
+	tmp <- merge(tmp,age_cat_map,by=c('age.cat','age.cat.label'))#
+	tmp <- tmp[, list(pop=sum(pop)), by=c('loc','age.cat2')]
+tmp
+e_acases_byage_c
+setnames(tmp, 'age.cat2','age')
+tmp
+ans <- merge(e_acases_byage_c, tmp, by=c('loc','age.cat2'))
+ans <- merge(e_acases_byage_c, tmp, by=c('loc','age'))
+ans
+set(ans, NULL, 'M', ans[, M/pop])
+ans
+set(ans, NULL, 'CL', ans[, CL/pop])#
+	set(ans, NULL, 'CU', ans[, CU/pop])
+ans
+set(ans, NULL, 'pop', NULL)
+ans
+summarise_attackrate_byage_c <- function(e_acases_byage_c, age_cat_map)#
+{#
+	cat("\n ----------- summarise_attackrate_byage_c ----------- \n")#
+	tmp <- subset(pop_info,select=c(loc, age.cat, age.cat.label, pop))#
+	tmp <- merge(tmp,age_cat_map,by=c('age.cat','age.cat.label'))#
+	tmp <- tmp[, list(pop=sum(pop)), by=c('loc','age.cat2')]#
+	setnames(tmp, 'age.cat2','age')#
+	ans <- merge(e_acases_byage_c, tmp, by=c('loc','age'))#
+	set(ans, NULL, 'M', ans[, M/pop])#
+	set(ans, NULL, 'CL', ans[, CL/pop])#
+	set(ans, NULL, 'CU', ans[, CU/pop])#
+	set(ans, NULL, 'pop', NULL)#
+	ans	#
+}
+attackrate_byage_c <- summarise_attackrate_byage_c(e_acases_byage_c, #
+		age_cat_map)
+attackrate_byage_c
+e_acases_eff_byage_c <- summarise_e_acases_eff_byage_c(age_cat_map,#
+		plot.pars.dcs$E_casesByAge,#
+		plot.pars.basic$dc,#
+		plot.pars.basic$da,#
+		plot.pars.basic$serial_interval,#
+		plot.pars.basic$stan_data$N2)
+e_acases_eff_byage_c
+e_acases_eff_byage_c <- as.data.table(e_acases_eff_byage_c)
+e_acases_eff_byage_c
+setnames(e_acases_eff_byage_c, 'region_name', 'loc')
+e_acases_eff_byage_c
+set(e_acases_eff_byage_c, NULL, 'region', NULL)
+e_acases_eff_byage_c
+unique(subset(pop_info, select=c(loc,loc_label)))
+e_acases_eff_byage_c <- merge(unique(subset(pop_info, select=c(loc,loc_label))), e_acases_eff_byage_c, by='loc')
+e_acases_eff_byage_c
+file <- paste0(outfile.base,'-summary-eff-infectious-cases-age.RDS')
+cat("\nWrite ",file," ... ")#
+	saveRDS(e_acases_eff_byage_c, file=file)
+summarise_Rt_byage_c <- function(RtByAge, age_cat_map, pop_info, dates, regions)#
+{	#
+	cat("\n ----------- summarise_Rt_byage_c ----------- \n")#
+	ps <- c(0.5, 0.025, 0.975)#
+	p_labs <- c('M','CL','CU')#
+	stopifnot( dim(RtByAge)[2]==length(regions) )#
+	ans <- vector('list',length(regions))  #
+	#	loop over locations for speed. very hard to take quantiles on such large data#
+	for(m in seq_along(regions))#
+	{#
+		#m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		#	select data from large table here#
+		#	no reshape outside the loop #
+		dt <- as.data.table( reshape2::melt( RtByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		#	minimise merging. so we make a few low dim steps now#
+		#	we also only take the absolute minimum columns that we need#
+		#	ie the age.cat.labels are just exhausting memory#
+		tmp <- subset(pop_info, loc==regions[m], select=c( age.cat, prop_pop))#
+		tmp <- merge(tmp, subset(age_cat_map, select=c(age.cat2, age.cat)), by='age.cat')#
+		setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))#
+		#	to avoid millions of divisions we precompute the weights now#
+		tmp <- tmp[, list(age_cat= age_cat,#
+						prop_pop2= prop_pop/sum(prop_pop)), #
+						by='age_cat2']#
+		#	one big merge using integers as key -- this is now fast#
+		dt <- merge(dt, tmp, by='age_cat')#
+		# 	aggregate Rt by age groups c#
+		dt <- dt[, list(value=sum(prop_pop2*value)), by=c('age_cat2','time','iteration')]	#
+		#	summarise#
+		dt <- dt[, list(q= quantile(value, prob=ps),#
+						q_label= p_labs), #
+						by=c('time','age_cat2')]#
+		#	add loc #
+		dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]#
+		dt <- merge(dt, tmp, by='time')#
+		# build new data object only after summarised#
+		ans[[m]] <- copy(dt)		#
+	}#
+	ans <- do.call('rbind',ans)#
+	#	make human readable loc labels#
+	tmp <- unique(subset(pop_info, select=c(loc, loc_label)))#
+	ans <- merge(ans, tmp, by='loc')#
+	ans <- merge(unique(subset(age_cat_map,select=c('age.cat2','age.cat2.label'))), ans, by.y=c('age_cat2'), by.x=c('age.cat2'))#
+	ans <- dcast.data.table(ans, loc + loc_label + age.cat2 + age.cat2.label + time + date ~ q_label, value.var='q')#
+	setnames(ans, c('age.cat2','age.cat2.label'), c('age_cat','age_band'))#
+	ans  		#
+}
+file <- paste0(outfile.base,'-summary-Rt-age.RDS')
+Rt_byage_c <- summarise_Rt_byage_c(plot.pars.dcs$RtByAge, #
+			age_cat_map, #
+			plot.pars.basic$pop_info, #
+			plot.pars.basic$dates, #
+			plot.pars.basic$regions)#
+	cat("\nWrite ",file," ... ")#
+	saveRDS(Rt_byage_c, file=file)
+summarise_e_acases_byage_c <- function(casesByAge, age_cat_map, pop_info, dates, regions)#
+{	#
+	ps <- c(0.5, 0.025, 0.975)#
+	p_labs <- c('M','CL','CU')#
+	stopifnot( dim(casesByAge)[2]==length(regions) )#
+	ans <- vector('list',length(regions))  #
+	#	loop over locations for speed. very hard to take quantiles on such large data#
+	for(m in seq_along(regions))#
+	{#
+		#m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		dt <- as.data.table( reshape2::melt( casesByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		tmp <- subset(age_cat_map, select=c(age.cat2, age.cat))#
+		setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))#
+		#	one big merge using integers as key -- this is now fast#
+		dt <- merge(dt, tmp, by='age_cat')#
+		# 	aggregate Rt by age groups c#
+		dt <- dt[, list(value=sum(value)), by=c('age_cat2','time','iteration')]	#
+		# 	cumsum#
+		setkey(dt, iteration, age_cat2, time)#
+		dt <- dt[, list(time=time, value=cumsum(value)), by=c('iteration','age_cat2')]	#
+		#	summarise		#
+		dt <- dt[, list( 	q= quantile(value, prob=ps),#
+						q_label=p_labs), #
+						by=c('time','age_cat2')]		#
+		#	add loc #
+		dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]#
+		dt <- merge(dt, tmp, by='time')#
+		# build new data object only after summarised#
+		ans[[m]] <- copy(dt)#
+	}#
+	ans <- do.call('rbind',ans)#
+	#	make human readable loc labels#
+	tmp <- unique(subset(pop_info, select=c(loc, loc_label)))#
+	ans <- merge(ans, tmp, by='loc')#
+	ans <- merge(unique(subset(age_cat_map,select=c('age.cat2','age.cat2.label'))), ans, by.y=c('age_cat2'), by.x=c('age.cat2'))#
+	ans <- dcast.data.table(ans, loc + loc_label + age.cat2 + age.cat2.label + time + date ~ q_label, value.var='q')#
+	setnames(ans, c('age.cat2','age.cat2.label'), c('age_cat','age_band'))#
+	ans	#
+}
+cat("\n ----------- summarise_e_acases_byage_c ----------- \n")#
+	e_acases_byage_c <- summarise_e_acases_byage_c(plot.pars.dcs$E_casesByAge,#
+		age_cat_map, #
+		plot.pars.basic$pop_info, #
+		plot.pars.basic$dates, #
+		plot.pars.basic$regions)#
+	cat("\nWrite ",file," ... ")#
+	saveRDS(e_acases_byage_c, file=file)
+file <- paste0(outfile.base,'-summary-cases-age.RDS')
+saveRDS(e_acases_byage_c, file=file)
+file <- paste0(outfile.base,'-summary-Rt-age.RDS')
+cat("\n ----------- summarise_Rt_byage_c ----------- \n")#
+	Rt_byage_c <- summarise_Rt_byage_c(plot.pars.dcs$RtByAge, #
+			age_cat_map, #
+			plot.pars.basic$pop_info, #
+			plot.pars.basic$dates, #
+			plot.pars.basic$regions)#
+	cat("\nWrite ",file," ... ")#
+	saveRDS(Rt_byage_c, file=file)
+e_acases_byage_c
+Rt_byage_c
+e_acases_eff_byage_c
+setnames(e_acases_eff_byage_c, c('dates'), c('date'))
+e_acases_eff_byage_c
+summarise_attackrate_byage_c <- function(e_acases_byage_c, age_cat_map)#
+{#
+	tmp <- subset(pop_info,select=c(loc, age.cat, age.cat.label, pop))#
+	tmp <- merge(tmp,age_cat_map,by=c('age.cat','age.cat.label'))#
+	tmp <- tmp[, list(pop=sum(pop)), by=c('loc','age.cat2')]#
+	setnames(tmp, 'age.cat2','age_cat')#
+	ans <- merge(e_acases_byage_c, tmp, by=c('loc','age_cat'))#
+	set(ans, NULL, 'M', ans[, M/pop])#
+	set(ans, NULL, 'CL', ans[, CL/pop])#
+	set(ans, NULL, 'CU', ans[, CU/pop])#
+	set(ans, NULL, 'pop', NULL)#
+	ans	#
+}
+attackrate_byage_c <- summarise_attackrate_byage_c(e_acases_byage_c, #
+		age_cat_map)
+attackrate_byage_c
+plot.pars.dcs <- NULL#
+gc()
+file <- paste0(outfile.base,'-stanout-transmission_pars.RDS')#
+cat("\n read RDS:", file)#
+plot.pars.trms <- readRDS(file)
+outfile.base
+Rt_byage_c
+plot_Rt_byage_c <- function(parameter,parname,ylab="",c,outfile.base=NULL){#
+	data = subset(parameter, loc == c)#
+	g_aRt_c <-  ggplot(data) +#
+		geom_ribbon(aes(x=dates, ymin = CL, ymax = CU, fill=age_band), alpha = .1,show.legend=F) +#
+		geom_line(aes(x=dates, y=M, col=age_band), stat='identity') +#
+		labs(x='',y=ylab) +#
+		scale_x_date(expand=c(0,0),date_breaks = "weeks", labels = date_format("%e %b"), #
+								 limits = c(data$dates[1], #
+								 					 data$dates[length(data$dates)])) + #
+		theme_bw() + #
+		theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position="bottom")+ #
+		scale_color_viridis_d(aesthetics = c("colour", "fill"),direction=-1) +#
+		guides(col = guide_legend(title="Age band",nrow=1)) +#
+		geom_hline(yintercept = 1, color = 'black', size = 1) 	+#
+		scale_y_sqrt(breaks=c(0.5,1,2^seq(1,max(max(parameter$M),1),1)))#
+	ggsave(paste0(outfile.base,'-',parname,'_byage_c-', c, '.png'), g_aRt_c, w = 10, h=5)#
+	return(g_aRt_c)#
+}
+plot_Rt_byage_c <- function(parameter,parname,ylab="",c,outfile.base=NULL)#
+{	#
+	if('loc'%in%colnames(parameter))#
+	{#
+		data <- subset(parameter, loc == c)	#
+	}#
+	if('region_name'%in%colnames(parameter))#
+	{#
+		data <- subset(parameter, region_name == c)	#
+	}#
+	g_aRt_c <-  ggplot(data) +#
+		geom_ribbon(aes(x=dates, ymin = CL, ymax = CU, fill=age_band), alpha = .1,show.legend=F) +#
+		geom_line(aes(x=dates, y=M, col=age_band), stat='identity') +#
+		labs(x='',y=ylab) +#
+		scale_x_date(expand=c(0,0),date_breaks = "weeks", labels = date_format("%e %b"), #
+								 limits = c(data$dates[1], data$dates[length(data$dates)])) + #
+		theme_bw() + #
+		theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position="bottom")+ #
+		scale_color_viridis_d(aesthetics = c("colour", "fill"),direction=-1) +#
+		guides(col = guide_legend(title="Age band",nrow=1)) +#
+		geom_hline(yintercept = 1, color = 'black', size = 1) 	+#
+		scale_y_sqrt(breaks=c(0.5,1,2^seq(1,max(max(parameter$M),1),1)))#
+#
+	if(!is.null(outfile.base))#
+	{#
+		ggsave(paste0(outfile.base,'-',parname,'_byage_c-', c, '.png'), g_aRt_c, w = 10, h=5)	#
+	}#
+	return(g_aRt_c)#
+}
+plot_par_byage_c <- function(parameter,parname,ylab="",c,outfile.base=NULL)#
+{#
+	if('loc'%in%colnames(parameter))#
+	{#
+		data <- subset(parameter, loc == c)	#
+	}#
+	if('region_name'%in%colnames(parameter))#
+	{#
+		data <- subset(parameter, region_name == c)	#
+	}#
+	g <-  ggplot(data) +#
+		geom_bar(aes(x=dates, y=M, fill=age_band), stat='identity') +#
+		labs(x='',y=ylab) +#
+		scale_x_date(expand=c(0,0),date_breaks = "weeks", labels = date_format("%e %b"), #
+								 limits = c(data$dates[1], #
+								 					 data$dates[length(data$dates)])) + #
+		theme_bw() + #
+		theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position="bottom") +#
+		scale_fill_viridis_d(begin=0,end=1,direction=-1) +#
+		guides(fill = guide_legend(title="Age band",nrow=1))#
+#
+	if(!is.null(outfile.base))#
+	{#
+		ggsave(paste0(outfile.base,'-',parname,'_byage_c-', c, '.png'), g, w = 10, h=5)#
+	}#
+	return(g)#
+}
+file <- paste0(outfile.base,'-stanout-transmission_pars.RDS')#
+cat("\n read RDS:", file)#
+plot.pars.trms <- readRDS(file)
+lambdaByAge <- plot.pars.trms$lambdaByAge
+ans <- vector('list',length(regions))
+ans
+m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		dt <- as.data.table( reshape2::melt( lambdaByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		tmp <- subset(age_cat_map, select=c(age.cat2, age.cat))#
+		setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))#
+		#	one big merge using integers as key -- this is now fast#
+		dt <- merge(dt, tmp, by='age_cat')
+dt
+dt <- dt[, list(value=sum(value)), by=c('age_cat2','time','iteration')]
+dt
+dt <- dt[, list( 	q= quantile(value, prob=ps),#
+						q_label=p_labs), #
+				by=c('time','age_cat2')]
+dt
+dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]#
+		dt <- merge(dt, tmp, by='time')
+dt
+plot_par_byage_c <- function(parameter,parname,ylab="",c,outfile.base=NULL)#
+{#
+	if('loc'%in%colnames(parameter))#
+	{#
+		data <- subset(parameter, loc == c)	#
+	}#
+	if('region_name'%in%colnames(parameter))#
+	{#
+		data <- subset(parameter, region_name == c)	#
+	}#
+	if('dates'%in%colnames(data))#
+	{#
+		colnames(data)[colnames(data)=='dates'] <- 'date'#
+	}#
+	g <-  ggplot(data) +#
+		geom_bar(aes(x=date, y=M, fill=age_band), stat='identity') +#
+		labs(x='',y=ylab) +#
+		scale_x_date(expand=c(0,0),date_breaks = "weeks", labels = date_format("%e %b"), #
+								 limits = c(data$date[1], #
+								 					 data$date[length(data$date)])) + #
+		theme_bw() + #
+		theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position="bottom") +#
+		scale_fill_viridis_d(begin=0,end=1,direction=-1) +#
+		guides(fill = guide_legend(title="Age band",nrow=1))#
+#
+	if(!is.null(outfile.base))#
+	{#
+		ggsave(paste0(outfile.base,'-',parname,'_byage_c-', c, '.png'), g, w = 10, h=5)#
+	}#
+	return(g)#
+}
+plot_Rt_byage_c <- function(parameter,parname,ylab="",c,outfile.base=NULL)#
+{	#
+	if('loc'%in%colnames(parameter))#
+	{#
+		data <- subset(parameter, loc == c)	#
+	}#
+	if('region_name'%in%colnames(parameter))#
+	{#
+		data <- subset(parameter, region_name == c)	#
+	}#
+	if('dates'%in%colnames(data))#
+	{#
+		colnames(data)[colnames(data)=='dates'] <- 'date'#
+	}#
+	g_aRt_c <-  ggplot(data) +#
+		geom_ribbon(aes(x=date, ymin = CL, ymax = CU, fill=age_band), alpha = .1,show.legend=FALSE) +#
+		geom_line(aes(x=date, y=M, col=age_band), stat='identity') +#
+		labs(x='',y=ylab) +#
+		scale_x_date(expand=c(0,0),date_breaks = "weeks", labels = date_format("%e %b"), #
+								 limits = c(data$date[1], data$date[length(data$date)])) + #
+		theme_bw() + #
+		theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position="bottom")+ #
+		scale_color_viridis_d(aesthetics = c("colour", "fill"),direction=-1) +#
+		guides(col = guide_legend(title="Age band",nrow=1)) +#
+		geom_hline(yintercept = 1, color = 'black', size = 1) 	+#
+		scale_y_sqrt(breaks=c(0.5,1,2^seq(1,max(max(parameter$M),1),1)))#
+#
+	if(!is.null(outfile.base))#
+	{#
+		ggsave(paste0(outfile.base,'-',parname,'_byage_c-', c, '.png'), g_aRt_c, w = 10, h=5)	#
+	}#
+	return(g_aRt_c)#
+}
+ans <- vector('list',length(regions))  #
+	#	loop over locations for speed. very hard to take quantiles on such large data#
+	for(m in seq_along(regions))#
+	{#
+		#m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		dt <- as.data.table( reshape2::melt( lambdaByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		tmp <- subset(age_cat_map, select=c(age.cat2, age.cat))#
+		setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))#
+		#	one big merge using integers as key -- this is now fast#
+		dt <- merge(dt, tmp, by='age_cat')#
+		# 	aggregate by age groups c#
+		dt <- dt[, list(value=sum(value)), by=c('age_cat2','time','iteration')]	#
+		#	summarise		#
+		dt <- dt[, list( 	q= quantile(value, prob=ps),#
+						q_label=p_labs), #
+				by=c('time','age_cat2')]		#
+		#	add loc #
+		dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]#
+		dt <- merge(dt, tmp, by='time')#
+		# build new data object only after summarised#
+		ans[[m]] <- copy(dt)#
+	}#
+	ans <- do.call('rbind',ans)
+#	make human readable loc labels#
+	tmp <- unique(subset(pop_info, select=c(loc, loc_label)))#
+	ans <- merge(ans, tmp, by='loc')#
+	ans <- merge(unique(subset(age_cat_map,select=c('age.cat2','age.cat2.label'))), ans, by.y=c('age_cat2'), by.x=c('age.cat2'))#
+	ans <- dcast.data.table(ans, loc + loc_label + age.cat2 + age.cat2.label + time + date ~ q_label, value.var='q')#
+	setnames(ans, c('age.cat2','age.cat2.label'), c('age_cat','age_band'))#
+	ans
+summarise_lambda_byage_c <- function(lambdaByAge, age_cat_map, pop_info, dates, regions)#
+{#
+	ps <- c(0.5, 0.025, 0.975)#
+	p_labs <- c('M','CL','CU')#
+	stopifnot( dim(casesByAge)[2]==length(regions) )#
+	ans <- vector('list',length(regions))  #
+	#	loop over locations for speed. very hard to take quantiles on such large data#
+	for(m in seq_along(regions))#
+	{#
+		#m <- 1	  #
+		cat('\nProcessing state',m,' ',regions[m])#
+		dt <- as.data.table( reshape2::melt( lambdaByAge[,m,,] ) )#
+		setnames(dt, 1:4, c('iteration','time','age_cat','value'))#
+		tmp <- subset(age_cat_map, select=c(age.cat2, age.cat))#
+		setnames(tmp, colnames(tmp), gsub('\\.','_',colnames(tmp)))#
+		#	one big merge using integers as key -- this is now fast#
+		dt <- merge(dt, tmp, by='age_cat')#
+		# 	aggregate by age groups c#
+		dt <- dt[, list(value=sum(value)), by=c('age_cat2','time','iteration')]	#
+		#	summarise		#
+		dt <- dt[, list( 	q= quantile(value, prob=ps),#
+						q_label=p_labs), #
+				by=c('time','age_cat2')]		#
+		#	add loc #
+		dt[, loc:= regions[m]]#
+		# add time index and date#
+		tmp <- unique(subset(dt, select=time))#
+		tmp[, date:= dates[[m]][tmp$time[1]] + tmp$time - tmp$time[1]]#
+		dt <- merge(dt, tmp, by='time')#
+		# build new data object only after summarised#
+		ans[[m]] <- copy(dt)#
+	}#
+	ans <- do.call('rbind',ans)#
+	#	make human readable loc labels#
+	tmp <- unique(subset(pop_info, select=c(loc, loc_label)))#
+	ans <- merge(ans, tmp, by='loc')#
+	ans <- merge(unique(subset(age_cat_map,select=c('age.cat2','age.cat2.label'))), ans, by.y=c('age_cat2'), by.x=c('age.cat2'))#
+	ans <- dcast.data.table(ans, loc + loc_label + age.cat2 + age.cat2.label + time + date ~ q_label, value.var='q')#
+	setnames(ans, c('age.cat2','age.cat2.label'), c('age_cat','age_band'))#
+	ans#
+}
+file <- paste0(outfile.base,'-summary-lambda-age.RDS')
+cat("\n ----------- summarise_lambda_byage_c ----------- \n")	#
+	lambda_byage_c <- summarise_lambda_byage_c(plot.pars.trms$lambdaByAge,#
+		age_cat_map, #
+		plot.pars.basic$pop_info, #
+		plot.pars.basic$dates, #
+		plot.pars.basic$regions)		#
+	cat("\nWrite ",file," ... ")
+saveRDS(lambda_byage_c, file=file)
+p_aRt <- vector('list',length(plot.pars.basic$regions))#
+for(c in plot.pars.basic$regions)#
+{#
+	p_aRt[[c]] <- plot_Rt_byage_c(Rt_byage_c, #
+			"aRt", #
+			ylab='Rt\n(posterior median by age band)', #
+			c, #
+			outfile.base=NULL)	#
+}
+p_eacases_eff <- vector('list',length(plot.pars.basic$regions))#
+for(c in plot.pars.basic$regions)#
+{#
+	p_eacases_eff[[c]] <- plot_par_byage_c(e_acases_eff_byage_c, #
+					"e_acases_eff", #
+					ylab='Total number of infectious people \n(posterior median by age band)',#
+					c,#
+					outfile.base=NULL) +#
+					scale_y_continuous(labels = function(x) format(x, scientific = FALSE))#
+}
+p_acases <- vector('list',length(plot.pars.basic$regions))#
+for(c in plot.pars.basic$regions)#
+{#
+	p_acases[[c]] <- plot_par_byage_c(e_acases_byage_c,#
+					"e_acases",#
+					ylab='Cumulative cases\n(posterior median by age band)',#
+					c,#
+					outfile.base=NULL) +#
+					scale_y_continuous(labels = function(x) format(x, scientific = FALSE))#
+}#
+#
+p_attrate <- vector('list',length(plot.pars.basic$regions))#
+for(c in plot.pars.basic$regions)#
+{	#
+	p_attrate[[c]] <- plot_par_byage_c(attackrate_byage_c,#
+			"attrate",#
+			ylab='Cumulative attack rate\n(posterior median by age band)',#
+			c,#
+			outfile.base=NULL)#
+}#
+#
+p_lambda <- vector('list',length(plot.pars.basic$regions))#
+for(c in plot.pars.basic$regions)#
+{		#
+	p_lambda[[c]] <- plot_par_byage_c(lambda_byage_c,#
+			"lambda",#
+			ylab='Infectious contacts \n(posterior median by age band)',#
+			c,#
+			outfile.base=NULL)#
+}
+p_lambda[[c]]
+countries <- "AL,AZ,CA,CO,CT,FL,GA,IA,ID,IL,IN,KS,KY,LA,MA,MD,MI,MS,NC,ND,NH,NJ,NV,NYC,OK,OR,RI,SC,TN,VA,WA,WI"#
+	n_countries <- length(unlist(strsplit(countries,',')))
+n_countries
+library(rstan)#
+library(data.table)#
+library(lubridate)#
+library(gdata)#
+library(dplyr)#
+library(tidyr)#
+library(EnvStats)#
+library(scales)#
+library(stringr)#
+library(imputeTS)#
+library(readr)
+indir <- '/Users/or105/git/Carlifornia-Covid19/m2rco'#
+setwd(indir)
+infile.deaths <- file.path(indir, 'data','covid_deaths_usafacts.csv')
+infile.pop <- file.path(indir,'data', 'covid_county_population_usafacts.csv')#
+#
+# stan_data#
+load("stan_data.RData")
+dd <- as.data.table( read.csv(infile.deaths, stringsAsFactors=FALSE) ) #
+colnames(dd)[1] <- 'countyFIPS'#
+setnames(dd,"countyFIPS",'countyFIPS', skip_absent = TRUE)
+dd
+dd <- melt(dd, id.vars=c('countyFIPS','County.Name','State','stateFIPS'), variable.name='DATE', value.name='CDEATHS')#
+setnames(dd, colnames(dd), gsub('\\.','_',toupper(colnames(dd))))#
+dd <- subset(dd, STATE=='CA')#
+dd <- subset(dd, COUNTYFIPS!=0 & !grepl('Cruise',COUNTY_NAME))#
+dd[, DATE:= gsub('^X','',DATE)]#
+dd[, DATE:= as.Date(DATE, format='%m.%d.%y')]
+dd
+tmp <- dd[, {#
+  deaths <- CDEATHS[ 2:length(CDEATHS)]	- CDEATHS[ 1:(length(CDEATHS)-1)]#
+  dates <- DATE[ 1:(length(CDEATHS)-1) ]#
+  list(DATE=dates, DEATHS=deaths)#
+}, by='COUNTYFIPS']#
+#
+dd <- merge(dd, tmp, by=c('COUNTYFIPS','DATE'), all.x=TRUE)#
+#
+#	read county pop & merge with death data #
+dp <- as.data.table( read.csv(infile.pop, stringsAsFactors=FALSE) )#
+colnames(dp)[1] <- 'countyFIPS'
+setnames(dp, colnames(dp), gsub('\\.','_',toupper(colnames(dp))))#
+dd <- merge(dd, dp, by=c('STATE','COUNTYFIPS','COUNTY_NAME'))
+code<-unique(dd$COUNTYFIPS)#
+states<-unique(dd$COUNTY_NAME)#
+statecode<-cbind(code,states)#
+colnames(statecode)<-c('code','sub_region_1')#
+#
+#ifr county data#
+ifr_by_state <- readRDS('data/weighted_ifr_states.RDS')#
+CA_ifr<-ifr_by_state[ifr_by_state$code=='CA',]#
+BA_ifr<-CA_ifr#
+for(i in 1:(length(states)-1)){#
+  BA_ifr<-rbind(BA_ifr,CA_ifr)#
+}#
+#
+CA_ifr<-BA_ifr#
+CA_ifr<-CA_ifr[c(2,3,4)]#
+CA_ifr<-cbind(CA_ifr,states,code)
+infile.case <- file.path(indir, 'data','covid_confirmed_usafacts.csv')#
+cc <- as.data.table( read.csv(infile.case, stringsAsFactors=FALSE) ) #
+colnames(cc)[1] <- 'countyFIPS'#
+cc <- melt(cc, id.vars=c('countyFIPS','County.Name','State','stateFIPS'), variable.name='DATE', value.name='CASE')#
+setnames(cc, colnames(cc), gsub('\\.','_',toupper(colnames(cc))))#
+cc <- subset(cc, STATE=='CA')#
+cc <- subset(cc, COUNTYFIPS!=0 & !grepl('Cruise',COUNTY_NAME))#
+cc[, DATE:= gsub('^X','',DATE)]#
+cc[, DATE:= as.Date(DATE, format='%m.%d.%y')]#
+#
+tmpc <- cc[, {#
+  cases <- CASE[ 2:length(CASE)]	- CASE[ 1:(length(CASE)-1)]#
+  dates <- DATE[ 1:(length(CASE)-1) ]#
+  list(DATE=dates, DAILY_CASE=cases)#
+}, by='COUNTYFIPS']#
+#
+cc <- merge(cc, tmpc, by=c('COUNTYFIPS','DATE'), all.x=TRUE)#
+cc <- subset(cc, is.na(DATE)==FALSE)#
+#
+if (max(dd$DATE)<max(cc$DATE)){#
+  cc<-cc[cc$DATE<=max(dd$DATE),]  #
+}#
+#
+dd <- merge(dd, cc, by=c('STATE','COUNTYFIPS','COUNTY_NAME','DATE','STATEFIPS'))#
+dd$region_census_sub_revised<-'Pacific'
+den<-read_csv('data/pop_den.csv')#
+den<-den[,c(1,4)]#
+colnames(den)<-c('COUNTYFIPS','pop_density')#
+dd<-merge(dd,den,by=c('COUNTYFIPS'),all.x=TRUE)#
+dd<-dd[,c(1,3:12)]#
+#
+setnames(dd,colnames(dd),c('code','state_name','date','region_code','cumulative_deaths',#
+                           'daily_deaths','pop_count','cumulative_cases','daily_cases',#
+                           'region_census_sub_revised','pop_density'))#
+#
+mindate<-as.Date('2020-02-01',format='%Y-%m-%d')#
+#
+dd<-dd[dd$date>=mindate]
+#mobility#
+ca_mob <- read_csv("data/Mobility_for_California.csv")#
+ca_mob$date<- as.Date(ca_mob$date, format = '%Y-%m-%d')#
+ca_mob<-ca_mob[,c(3,4,7:13)]#
+names(ca_mob) <- c( "state", "sub_region_1",#
+                    "date", "retail.recreation", "grocery.pharmacy", "parks", "transitstations",#
+                    "workplace", "residential")#
+#
+ca_mob<-merge(ca_mob,statecode,by='sub_region_1')#
+ca_mob[, c(4:9)] <- ca_mob[, c(4:9)]/100#
+ca_mob[, c(4:8)] <- ca_mob[, c(4:8)] * -1#
+max_date <- max(ca_mob$date)#
+#
+dd$date = as.Date(dd$date, format = '%Y-%m-%d')#
+#
+dd<-dd[which(dd$date <= max_date),]#
+#
+ca_mob1 <- read.csv("data/Overall_Mobility_California.csv")#
+#
+#ca_mob1$date<-as.Date(ca_mob1$date, format = "%Y/%m/%d")#
+#
+ca_mob1<-ca_mob1[,c(3,4,7:13)]#
+names(ca_mob1) <- c( "state", "sub_region_1",#
+                     "date", "retail.recreation", "grocery.pharmacy", "parks", "transitstations",#
+                     "workplace", "residential")#
+ca_mob1[, c(4:9)] <- ca_mob1[, c(4:9)]/100#
+ca_mob1[, c(4:8)] <- ca_mob1[, c(4:8)] * -1#
+ca_mob1$avg <- rowMeans(ca_mob1[,c(4:6,8)])
+str(ca_mob1)
+total_deaths <- rep(0,58)#
+#
+for(i in 1:58) {#
+  s <- subset(dd, state_name==states[i])#
+  total_deaths[i] <- max(s$cumulative_deaths)#
+}#
+#
+# choose minimum deaths#
+sig <- states[which(total_deaths>10)]#
+#
+dd1 <- subset(dd, state_name %in% sig)#
+#
+# no. of counties#
+M = length(sig)#
+#
+P = 3#
+#
+P_partial_state = 3#
+#
+N0 = 6#
+#
+N <- rep(134, M)#
+#
+N2 = 134#
+#
+x2 <- subset(ca_mob, sub_region_1 %in% sig)#
+#
+x2$grocery.pharmacy <- na_interpolation(x2$grocery.pharmacy, option = "linear")#
+#
+x2$avg <- rowMeans(x2[,c(4:6,8)])#
+#
+min_date <- min(x2$date)#
+#
+dd1 <- subset(dd1, date>=min_date)#
+#
+deaths <- matrix(data=dd1$daily_deaths, nrow = N2, ncol = M)#
+#
+f <- matrix(CA_ifr$ifr, nrow = N2, ncol = M)#
+#
+X_partial <- list()#
+#
+for (i in 1:M) {#
+  s <- subset(x2, sub_region_1==sig[i])#
+  X_partial[[i]] <- as.matrix(s[, c(11,7,9)], ncol=3)#
+}#
+#
+X_partial_state <- as.matrix(X_partial)#
+#
+X1 <- ca_mob1[,c(10,7,9)]#
+#
+X <- as.matrix(X1)#
+#
+EpidemicStart <- rep(31,M)#
+#
+pop <- unique(dd1$pop_count)#
+#
+SI <- stan_data[["SI"]][15:148]#
+#
+data1 <- c("M", "P", "P_partial_state", "N0", "N", "N2", "deaths", "f", "X", "X_partial_state", "EpidemicStart", "pop", "SI")
+library(imputeTS)
+total_deaths <- rep(0,58)#
+#
+for(i in 1:58) {#
+  s <- subset(dd, state_name==states[i])#
+  total_deaths[i] <- max(s$cumulative_deaths)#
+}#
+#
+# choose minimum deaths#
+sig <- states[which(total_deaths>10)]#
+#
+dd1 <- subset(dd, state_name %in% sig)#
+#
+# no. of counties#
+M = length(sig)#
+#
+P = 3#
+#
+P_partial_state = 3#
+#
+N0 = 6#
+#
+N <- rep(134, M)#
+#
+N2 = 134#
+#
+x2 <- subset(ca_mob, sub_region_1 %in% sig)#
+#
+x2$grocery.pharmacy <- na_interpolation(x2$grocery.pharmacy, option = "linear")#
+#
+x2$avg <- rowMeans(x2[,c(4:6,8)])#
+#
+min_date <- min(x2$date)#
+#
+dd1 <- subset(dd1, date>=min_date)#
+#
+deaths <- matrix(data=dd1$daily_deaths, nrow = N2, ncol = M)#
+#
+f <- matrix(CA_ifr$ifr, nrow = N2, ncol = M)#
+#
+X_partial <- list()#
+#
+for (i in 1:M) {#
+  s <- subset(x2, sub_region_1==sig[i])#
+  X_partial[[i]] <- as.matrix(s[, c(11,7,9)], ncol=3)#
+}#
+#
+X_partial_state <- as.matrix(X_partial)#
+#
+X1 <- ca_mob1[,c(10,7,9)]#
+#
+X <- as.matrix(X1)#
+#
+EpidemicStart <- rep(31,M)#
+#
+pop <- unique(dd1$pop_count)#
+#
+SI <- stan_data[["SI"]][15:148]#
+#
+data1 <- c("M", "P", "P_partial_state", "N0", "N", "N2", "deaths", "f", "X", "X_partial_state", "EpidemicStart", "pop", "SI")
+library(rstan)#
+library(data.table)#
+library(lubridate)#
+library(gdata)#
+library(dplyr)#
+library(tidyr)#
+library(EnvStats)#
+library(scales)#
+library(stringr)#
+library(imputeTS)#
+library(readr)#
+# from process_data.R#
+# indir <- file directory\#
+# indir <- './Carlifornia-Covid19/m2rco'#
+# indir <- '/Users/or105/git/Carlifornia-Covid19/m2rco'#
+setwd(indir)#
+# Deaths are from#
+# https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/?utm_source=MailChimp&utm_campaign=census-covid2#
+infile.deaths <- file.path(indir, 'data','covid_deaths_usafacts.csv')#
+# County Population is from#
+# https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/?utm_source=MailChimp&utm_campaign=census-covid2#
+infile.pop <- file.path(indir,'data', 'covid_county_population_usafacts.csv')#
+#
+# stan_data#
+load("stan_data.RData")#
+#	read & select death data#
+dd <- as.data.table( read.csv(infile.deaths, stringsAsFactors=FALSE) ) #
+colnames(dd)[1] <- 'countyFIPS'#
+setnames(dd,"countyFIPS",'countyFIPS', skip_absent = TRUE)#
+#
+#luanma#
+dd <- melt(dd, id.vars=c('countyFIPS','County.Name','State','stateFIPS'), variable.name='DATE', value.name='CDEATHS')#
+setnames(dd, colnames(dd), gsub('\\.','_',toupper(colnames(dd))))#
+dd <- subset(dd, STATE=='CA')#
+dd <- subset(dd, COUNTYFIPS!=0 & !grepl('Cruise',COUNTY_NAME))#
+dd[, DATE:= gsub('^X','',DATE)]#
+dd[, DATE:= as.Date(DATE, format='%m.%d.%y')]#
+#
+#	calculate deaths per day and add #
+#
+tmp <- dd[, {#
+  deaths <- CDEATHS[ 2:length(CDEATHS)]	- CDEATHS[ 1:(length(CDEATHS)-1)]#
+  dates <- DATE[ 1:(length(CDEATHS)-1) ]#
+  list(DATE=dates, DEATHS=deaths)#
+}, by='COUNTYFIPS']#
+#
+dd <- merge(dd, tmp, by=c('COUNTYFIPS','DATE'), all.x=TRUE)#
+#
+#	read county pop & merge with death data #
+dp <- as.data.table( read.csv(infile.pop, stringsAsFactors=FALSE) )#
+colnames(dp)[1] <- 'countyFIPS'#
+#
+#luanma#
+setnames(dp, colnames(dp), gsub('\\.','_',toupper(colnames(dp))))#
+dd <- merge(dd, dp, by=c('STATE','COUNTYFIPS','COUNTY_NAME'))#
+#
+#states<-county#
+#
+code<-unique(dd$COUNTYFIPS)#
+states<-unique(dd$COUNTY_NAME)#
+statecode<-cbind(code,states)#
+colnames(statecode)<-c('code','sub_region_1')#
+#
+#ifr county data#
+ifr_by_state <- readRDS('data/weighted_ifr_states.RDS')#
+CA_ifr<-ifr_by_state[ifr_by_state$code=='CA',]#
+BA_ifr<-CA_ifr#
+for(i in 1:(length(states)-1)){#
+  BA_ifr<-rbind(BA_ifr,CA_ifr)#
+}#
+#
+CA_ifr<-BA_ifr#
+CA_ifr<-CA_ifr[c(2,3,4)]#
+CA_ifr<-cbind(CA_ifr,states,code)#
+#
+#case https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/#
+infile.case <- file.path(indir, 'data','covid_confirmed_usafacts.csv')#
+cc <- as.data.table( read.csv(infile.case, stringsAsFactors=FALSE) ) #
+colnames(cc)[1] <- 'countyFIPS'#
+cc <- melt(cc, id.vars=c('countyFIPS','County.Name','State','stateFIPS'), variable.name='DATE', value.name='CASE')#
+setnames(cc, colnames(cc), gsub('\\.','_',toupper(colnames(cc))))#
+cc <- subset(cc, STATE=='CA')#
+cc <- subset(cc, COUNTYFIPS!=0 & !grepl('Cruise',COUNTY_NAME))#
+cc[, DATE:= gsub('^X','',DATE)]#
+cc[, DATE:= as.Date(DATE, format='%m.%d.%y')]#
+#
+tmpc <- cc[, {#
+  cases <- CASE[ 2:length(CASE)]	- CASE[ 1:(length(CASE)-1)]#
+  dates <- DATE[ 1:(length(CASE)-1) ]#
+  list(DATE=dates, DAILY_CASE=cases)#
+}, by='COUNTYFIPS']#
+#
+cc <- merge(cc, tmpc, by=c('COUNTYFIPS','DATE'), all.x=TRUE)#
+cc <- subset(cc, is.na(DATE)==FALSE)#
+#
+if (max(dd$DATE)<max(cc$DATE)){#
+  cc<-cc[cc$DATE<=max(dd$DATE),]  #
+}#
+#
+dd <- merge(dd, cc, by=c('STATE','COUNTYFIPS','COUNTY_NAME','DATE','STATEFIPS'))#
+dd$region_census_sub_revised<-'Pacific'#
+#
+#density#
+den<-read_csv('data/pop_den.csv')#
+den<-den[,c(1,4)]#
+colnames(den)<-c('COUNTYFIPS','pop_density')#
+dd<-merge(dd,den,by=c('COUNTYFIPS'),all.x=TRUE)#
+dd<-dd[,c(1,3:12)]#
+#
+setnames(dd,colnames(dd),c('code','state_name','date','region_code','cumulative_deaths',#
+                           'daily_deaths','pop_count','cumulative_cases','daily_cases',#
+                           'region_census_sub_revised','pop_density'))#
+#
+mindate<-as.Date('2020-02-01',format='%Y-%m-%d')#
+#
+dd<-dd[dd$date>=mindate]#
+#mobility#
+ca_mob <- read_csv("data/Mobility_for_California.csv")#
+ca_mob$date<- as.Date(ca_mob$date, format = '%Y-%m-%d')#
+ca_mob<-ca_mob[,c(3,4,7:13)]#
+names(ca_mob) <- c( "state", "sub_region_1",#
+                    "date", "retail.recreation", "grocery.pharmacy", "parks", "transitstations",#
+                    "workplace", "residential")#
+#
+ca_mob<-merge(ca_mob,statecode,by='sub_region_1')#
+ca_mob[, c(4:9)] <- ca_mob[, c(4:9)]/100#
+ca_mob[, c(4:8)] <- ca_mob[, c(4:8)] * -1#
+max_date <- max(ca_mob$date)#
+#
+dd$date = as.Date(dd$date, format = '%Y-%m-%d')#
+#
+dd<-dd[which(dd$date <= max_date),]#
+#
+ca_mob1 <- read.csv("data/Overall_Mobility_California.csv")#
+#
+#ca_mob1$date<-as.Date(ca_mob1$date, format = "%Y/%m/%d")#
+#
+ca_mob1<-ca_mob1[,c(3,4,7:13)]#
+names(ca_mob1) <- c( "state", "sub_region_1",#
+                     "date", "retail.recreation", "grocery.pharmacy", "parks", "transitstations",#
+                     "workplace", "residential")#
+ca_mob1[, c(4:9)] <- ca_mob1[, c(4:9)]/100#
+ca_mob1[, c(4:8)] <- ca_mob1[, c(4:8)] * -1#
+ca_mob1$avg <- rowMeans(ca_mob1[,c(4:6,8)])#
+#
+#######################################
+total_deaths <- rep(0,58)#
+#
+for(i in 1:58) {#
+  s <- subset(dd, state_name==states[i])#
+  total_deaths[i] <- max(s$cumulative_deaths)#
+}#
+#
+# choose minimum deaths#
+sig <- states[which(total_deaths>10)]#
+#
+dd1 <- subset(dd, state_name %in% sig)#
+#
+# no. of counties#
+M = length(sig)#
+#
+P = 3#
+#
+P_partial_state = 3#
+#
+N0 = 6#
+#
+N <- rep(134, M)#
+#
+N2 = 134#
+#
+x2 <- subset(ca_mob, sub_region_1 %in% sig)#
+#
+x2$grocery.pharmacy <- na_interpolation(x2$grocery.pharmacy, option = "linear")#
+#
+x2$avg <- rowMeans(x2[,c(4:6,8)])#
+#
+min_date <- min(x2$date)#
+#
+dd1 <- subset(dd1, date>=min_date)#
+#
+deaths <- matrix(data=dd1$daily_deaths, nrow = N2, ncol = M)#
+#
+f <- matrix(CA_ifr$ifr, nrow = N2, ncol = M)
+X_partial <- list()#
+#
+for (i in 1:M) {#
+  s <- subset(x2, sub_region_1==sig[i])#
+  X_partial[[i]] <- as.matrix(s[, c(11,7,9)], ncol=3)#
+}#
+#
+X_partial_state <- as.matrix(X_partial)#
+#
+X1 <- ca_mob1[,c(10,7,9)]#
+#
+X <- as.matrix(X1)#
+#
+EpidemicStart <- rep(31,M)#
+#
+pop <- unique(dd1$pop_count)#
+#
+SI <- stan_data[["SI"]][15:148]#
+#
+data1 <- c("M", "P", "P_partial_state", "N0", "N", "N2", "deaths", "f", "X", "X_partial_state", "EpidemicStart", "pop", "SI")#
+#
+options(mc.cores = parallel::detectCores())#
+#
+rstan_options(auto_write = TRUE)#
+#
+mod1 <- stan_model("usa/code/stan-models/base-usa-simple.stan")
+require(rstan)
+mod1 <- stan_model("usa/code/stan-models/base-usa-simple.stan")
