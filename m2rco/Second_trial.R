@@ -88,6 +88,7 @@ CA_ifr<-cbind(CA_ifr,states,code)
 infile.case <- file.path(indir, 'data','covid_confirmed_usafacts.csv')
 cc <- as.data.table( read.csv(infile.case, stringsAsFactors=FALSE) ) 
 colnames(cc)[1] <- 'countyFIPS'
+cc[,166] <- NULL
 cc <- melt(cc, id.vars=c('countyFIPS','County.Name','State','stateFIPS'), variable.name='DATE', value.name='CASE')
 setnames(cc, colnames(cc), gsub('\\.','_',toupper(colnames(cc))))
 cc <- subset(cc, STATE=='CA')
