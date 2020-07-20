@@ -14,6 +14,7 @@ library(readr)
 # from process_data.R
 # indir <- file directory\
 # indir <- './Carlifornia-Covid19/m2rco'
+# indir <- '/Users/or105/git/Carlifornia-Covid19/m2rco'
 setwd(indir)
 
 
