@@ -2,8 +2,15 @@ library(rstan)
 library(data.table)
 library(bayesplot)
 library(ggplot2)
-#load input for this script
-`-stanout-fit` <- readRDS("~/Desktop/Carlifornia-Covid19/m2rco/data/-stanout-fit.RDS")
+
+# set indir as directory to Carlifornia-Covid19 folder
+indir <- "/Users/liuhanyang/Desktop/UROP-Stats/M2R/Carlifornia-Covid19"
+# create trace_plots folder under data folder
+# we will save all outputs in trace_plots folder
+dir.create(file.path(indir, 'm2rco/data/trace_plots'))
+
+# load input for this script
+`-stanout-fit` <- readRDS(file.path(indir, 'm2rco/data', "-stanout-fit.RDS"))
 fit=`-stanout-fit`
 
 # make table of parameters
@@ -20,7 +27,7 @@ Rhat <- summary.par[, which(colnames(summary.par) == "Rhat")]
 
 bound <- 500
 pars.with.small.neff <- summary.par[which(neff < bound),]
-saveRDS(pars.with.small.neff, file=paste0(indir,'-pars-with-small-neff.rds'))
+saveRDS(pars.with.small.neff, file=paste0(indir, '/m2rco/data/trace_plots/', '-pars-with-small-neff.rds'))
 cat("\n ----------- calculate pars with small neff: end ----------- \n")
 
 cat("\n ----------- report sampler diagnostics: start ----------- \n")
@@ -33,7 +40,7 @@ for (i in colnames(sampler_params[[1]])) {
   sampler_diagnostics <- rbind(sampler_diagnostics, tmp)
 }
 
-saveRDS(sampler_diagnostics,file=paste0(indir,'-sampler_diagnostics.rds'))
+saveRDS(sampler_diagnostics,file=paste0(indir, '/m2rco/data/trace_plots/', '-sampler_diagnostics.rds'))
 cat("\n ----------- report sampler diagnostics: end ----------- \n")
 
 
@@ -61,10 +68,11 @@ tryCatch({
   tmp <- subset(fit.pars)
   for(x in tmp$name)
   {
-    make_trace_plot(fit, x, paste0(indir,x))	
+    make_trace_plot(fit, x, paste0(indir, '/m2rco/data/trace_plots/',x))	
   }
   
-  tmp <- subset(fit.pars)
-  make_trace_plot(fit, tmp$name, paste0(indir), '.png')		
+  # tmp <- subset(fit.pars)
+  # make_trace_plot(fit, tmp$name, paste0(indir, '/m2rco/data/trace_plots/'), '.png')		
 })
 cat("\n ----------- make trace plots: end ----------- \n")
+
