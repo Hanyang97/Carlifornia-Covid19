@@ -14,16 +14,14 @@ library(matrixStats)
 library(optparse)
 
 
+indir <- './Carlifornia-Covid19/m2rco'
+setwd(indir)
 
 source('usa/code/utils/read-data-usa.r')
 source('usa/code/process-covariates.r')
 
 #GFNAME_county_population <<-'covid_county_population_usafacts.csv'
 #GFNAME_county_death <<- 'covid_deaths_usafacts.csv'
-
-# set indir same as process_data.R file location
-indir <- './'
-setwd(indir)
 
 # Deaths are from
 # https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/?utm_source=MailChimp&utm_campaign=census-covid2
@@ -35,7 +33,7 @@ infile.pop <- file.path(indir,'data/covid_county_population_usafacts.csv')
 
 #	read & select death data
 dd <- as.data.table( read.csv(infile.deaths, stringsAsFactors=FALSE) ) 
-# setnames(dd,"?countyFIPS",'countyFIPS')
+colnames(dd)[1] <- "countyFIPS"
 #luanma
 
 dd <- melt(dd, id.vars=c('countyFIPS','County.Name','State','stateFIPS'), variable.name='DATE', value.name='CDEATHS')
@@ -55,8 +53,8 @@ dd <- merge(dd, tmp, by=c('COUNTYFIPS','DATE'), all.x=TRUE)
 
 #	read county pop & merge with death data 
 dp <- as.data.table( read.csv(infile.pop, stringsAsFactors=FALSE) )
-# setnames(dp,"?countyFIPS",'countyFIPS')
-#luanma
+colnames(dp)[1] <- "countyFIPS"
+
 setnames(dp, colnames(dp), gsub('\\.','_',toupper(colnames(dp))))
 dd <- merge(dd, dp, by=c('STATE','COUNTYFIPS','COUNTY_NAME'))
 
@@ -68,11 +66,8 @@ statecode<-cbind(code,states)
 colnames(statecode)<-c('code','sub_region_1')
 
 
-
-
-
 #ifr county data
-ifr_by_state <- read_ifr_data()
+ifr_by_state <- readRDS('data/weighted_ifr_states.RDS')
 CA_ifr<-ifr_by_state[ifr_by_state$code=='CA',]
 BA_ifr<-CA_ifr
 for(i in 1:(length(states)-1)){
@@ -90,7 +85,7 @@ CA_ifr<-cbind(CA_ifr,states,code)
 infile.case <- file.path(indir,'data','covid_confirmed_usafacts.csv')
 cc <- as.data.table( read.csv(infile.case, stringsAsFactors=FALSE) )
 cc = cc[,-c('X')]
-# setnames(cc,"?countyFIPS",'countyFIPS')
+colnames(cc)[1] <- "countyFIPS"
 cc <- melt(cc, id.vars=c('countyFIPS','County.Name','State','stateFIPS'), variable.name='DATE', value.name='CASE')
 setnames(cc, colnames(cc), gsub('\\.','_',toupper(colnames(cc))))
 cc <- subset(cc, STATE=='CA')
@@ -131,20 +126,24 @@ mindate<-as.Date('2020-02-01',format='%Y-%m-%d')
 dd<-dd[dd$date>=mindate]
 
 #mobility
-ca_mob<-read.csv(file.path(indir, 'data/Mobility_for_California.csv'), stringsAsFactors = FALSE)
-ca_mob$date<-as.Date(ca_mob$date, format = "%Y/%m/%d")
-ca_mob<-ca_mob[,c(1,3:10)]
+ca_mob<-read.csv(file.path(indir,'data/Mobility_for_California.csv'), stringsAsFactors = FALSE)
+ca_mob$date<- as.Date(ca_mob$date, format = '%Y-%m-%d')
+ca_mob<-ca_mob[,c(1,4,7:13)]
 names(ca_mob) <- c( "country_region", "sub_region_1",
                             "date", "retail.recreation", "grocery.pharmacy", "parks", "transitstations",
                             "workplace", "residential")
-ca_mob$sub_region_2<-''
-ca_mob$country_region_code<-'US'
+#ca_mob$sub_region_2<-''
+#ca_mob$country_region_code<-'US'
 ca_mob<-merge(ca_mob,statecode,by=c('sub_region_1'),all.x=TRUE)
 ca_mob[, c(4:9)] <- ca_mob[, c(4:9)]/100
 ca_mob[, c(4:8)] <- ca_mob[, c(4:8)] * -1
 
 max_date <- max(ca_mob$date)
 dd<-dd[which(dd$date <= max_date),]
+
+min_date <- min(ca_mob$date)
+dd <- dd[which(dd$date >= min_date),]
+
 #zero death
 zerod<-dd[dd$date==max_date]
 zerod<-zerod[zerod$cumulative_deaths<5]
@@ -159,9 +158,9 @@ ca_mob$code<-as.character(ca_mob$code)
 CA_ifr$code<-as.character(CA_ifr$code)
 
 # read interventions
-interventions <- readRDS('usa/data/covariates.RDS')
+interventions <- readRDS('data/covariates.RDS')
 # read interventions lifted date
-interventions_lifted <- readRDS('usa/data/covariates_ended.RDS')
+interventions_lifted <- readRDS('data/covariates_ended.RDS')
 # Number of days to forecast
 forecast <- 0
 
@@ -178,7 +177,9 @@ formula_partial_regional = as.formula(args[3])
 formula_partial_state = as.formula(args[4])
 StanModel = args[1]
 
-processed_data <- process_covariates(states = code, 
+source('usa/code/process-covariates.r')
+
+processed_data <- process_covariates(states = sigcode[,1], 
                                      mobility = ca_mob,
                                      death_data = death_data , 
                                      ifr_by_state = CA_ifr, 

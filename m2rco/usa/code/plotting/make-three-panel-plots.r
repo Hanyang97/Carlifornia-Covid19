@@ -3,10 +3,11 @@ make_three_panel_plots <- function(data_state, covariates_long,
                                    jobid, state, label = "", ext = ".png"){
   #nam <- read.csv("usa/data/states.csv")
   #full_name <- (nam$State[which(nam$Abbreviation == state)])
-  nam<-read.csv('pop_den.csv')
+  nam<-read.csv('data/pop_den.csv')
   colnames(nam)[1]<-'countyFIPS'
+  nam$County_Name <- as.character(nam$County_Name)
   nam$countyFIPS<- as.character(nam$countyFIPS)
-  full_name<-(nam$County_Name[which(nam$countyFIPS== state)])
+  full_name<-nam$County_Name[which(nam$countyFIPS== state)]
   
   
   data_cases_95 <- data.frame(data_state$date, data_state$cases_min, 
@@ -29,7 +30,7 @@ make_three_panel_plots <- function(data_state, covariates_long,
     ylab("Daily number of infections") +
     scale_x_date(date_breaks = "2 weeks", labels = date_format("%e %b"), 
                  limits = c(as.Date("2020-02-29"), max(data_state$date))) + 
-    scale_y_continuous(labels = comma, expand=expansion(mult=c(0,0.1))) +
+    scale_y_continuous(labels = comma, expand=expand_scale(mult=c(0,0.1))) +
     scale_fill_manual(name = "", labels = c("50%", "95%"),
                       values = c(alpha("deepskyblue4", 0.55), 
                                  alpha("deepskyblue4", 0.45))) + 
@@ -62,7 +63,7 @@ make_three_panel_plots <- function(data_state, covariates_long,
         aes(ymin = death_min, ymax = death_max, fill = key)) +
       xlab("") +
       ylab("Daily number of deaths") +
-      scale_y_continuous(expand=expansion(mult=c(0,0.1))) + 
+      scale_y_continuous(expand=expand_scale(mult=c(0,0.1))) + 
       scale_x_date(date_breaks = "2 weeks", labels = date_format("%e %b"), 
                    limits = c(as.Date("2020-02-5"), max(data_state$date))) +
       scale_fill_manual(name = "", labels = c("50%", "95%"),
@@ -75,7 +76,7 @@ make_three_panel_plots <- function(data_state, covariates_long,
             axis.title = element_text(size = 12)) + 
       #panel.grid.minor = element_blank()) + 
       guides(fill=guide_legend(ncol=1)) + 
-      ggtitle(full_name[[1]]) 
+      ggtitle(full_name) 
   } else {
     p2 <-   ggplot(data_state, aes(x = date)) +
       geom_bar(data = data_state, aes(y = reported_deaths, fill = "reported"),
@@ -85,7 +86,7 @@ make_three_panel_plots <- function(data_state, covariates_long,
         aes(ymin = death_min, ymax = death_max, fill = key)) +
       xlab("") +
       ylab("Daily number of deaths") +
-      scale_y_continuous(labels = comma, expand=expansion(mult=c(0,0.1))) + 
+      scale_y_continuous(labels = comma, expand=expand_scale(mult=c(0,0.1))) + 
       scale_x_date(date_breaks = "2 weeks", labels = date_format("%e %b"), 
                    limits = c(as.Date("2020-02-5"), max(data_state$date))) +
       scale_fill_manual(name = "", labels = c("50%", "95%"),
@@ -98,7 +99,7 @@ make_three_panel_plots <- function(data_state, covariates_long,
             axis.title = element_text(size = 12)) + 
       #panel.grid.minor = element_blank()) + 
       guides(fill=guide_legend(ncol=1)) + 
-      ggtitle(full_name[[1]]) 
+      ggtitle(full_name) 
   }
   
   

@@ -7,7 +7,7 @@ library(ggpubr)
 make_plots_all <- function(filename, SIM=FALSE, label = "", last_date_data,
                            ext = ".png", group = NULL, groupings){
   print("Making three panel plots")
-  load(filename)
+  fit <- readRDS(filename)
   out <- rstan::extract(fit)
   
   rt_data_long <- NULL
@@ -41,7 +41,7 @@ make_plots_all <- function(filename, SIM=FALSE, label = "", last_date_data,
     data_state_plot <- data_state_plot[which(data_state_plot$date <= last_date_data),]
     
     # Read in covariates
-    covariates <- readRDS("usa/data/covariates.RDS")
+    covariates <- readRDS("data/covariates.RDS")
     covariates$Quarantine = NULL
     covariates$GathRecomAny = NULL
     covariates_long <- gather(covariates[which(covariates$StatePostal == 'CA'), 
@@ -50,7 +50,7 @@ make_plots_all <- function(filename, SIM=FALSE, label = "", last_date_data,
     covariates_long$x <- rep(NA, length(covariates_long$key))
     covariates_long$time <- rep("start", length(covariates_long$key))
     
-    covariates_ended <- readRDS("usa/data/covariates_ended.RDS")
+    covariates_ended <- readRDS("data/covariates_ended.RDS")
     covariates_ended$Quarantine = NULL
     covariates_ended$GathRecomAny = NULL
     covariates_ended_long <- gather(covariates_ended[which(covariates_ended$StatePostal == 'CA'), 

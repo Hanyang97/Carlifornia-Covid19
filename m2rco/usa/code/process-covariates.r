@@ -24,8 +24,10 @@ process_covariates <- function(states, mobility, intervention = NULL,
   serial_interval = rbind(serial_interval, pad_serial.interval)
   
   ## read population
-  df_pop <- read.csv("pop_den.csv",stringsAsFactors=FALSE)
-  setnames(df_pop,'﻿countyFIPS','code')
+  df_pop <- read.csv("data/pop_den.csv",stringsAsFactors=FALSE)
+  colnames(df_pop)[1] <- "code"
+  df_pop <- subset(df_pop, code %in% states)
+  # setnames(df_pop,'﻿countyFIPS','code')
   # various distributions required for modelling
   mean1 <- 5.1; cv1 <- 0.86; # infection to onset
   mean2 <- 17.8; cv2 <- 0.45 # onset to death
@@ -79,7 +81,7 @@ process_covariates <- function(states, mobility, intervention = NULL,
     #   intervention_state <- interventions[interventions$StatePostal == 'NY', c(2:7)]
     # }
     # Selects population for each state
-    pop_state <-  df_pop[df_pop$code==State, names(df_pop) == "population"][[1]]
+    pop_state <-  df_pop[df_pop$code== State, names(df_pop) == "population"]
     # Subsets data by state 
     data_state <- death_data[death_data$code == State,]
     # Maks dates numeric
