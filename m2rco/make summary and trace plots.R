@@ -18,6 +18,11 @@ summary.par = summary(fit)$summary
 neff <- as.numeric(summary.par[, which(colnames(summary.par) == "n_eff")])
 Rhat <- summary.par[, which(colnames(summary.par) == "Rhat")]
 
+bound <- 500
+pars.with.small.neff <- summary.par[which(neff < bound),]
+saveRDS(pars.with.small.neff, file=paste0(indir,'-pars-with-small-neff.rds'))
+cat("\n ----------- calculate pars with small neff: end ----------- \n")
+
 cat("\n ----------- report sampler diagnostics: start ----------- \n")
 sampler_params <- get_sampler_params(fit, inc_warmup = FALSE)
 sampler_diagnostics <- data.table()
@@ -63,4 +68,3 @@ tryCatch({
   make_trace_plot(fit, tmp$name, paste0(indir), '.png')		
 })
 cat("\n ----------- make trace plots: end ----------- \n")
-
