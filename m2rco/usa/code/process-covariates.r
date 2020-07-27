@@ -67,7 +67,7 @@ process_covariates <- function(states, mobility, intervention = NULL,
                                       "OtherBuisnessClose_lif", "Quarantine_lif", "RestaurantRestrict_lif", "SchoolClose_lif", "StayAtHome_lif")
   interventions_lifted$April1 = as.Date("2020-04-01")
   for(State in states) {
-    # Selects correct IFR for each country
+    # Selects correct IFR for each county
     ifr_state <- ifr_by_state$ifr[ifr_by_state$code == State]
     # Selects correct Interventions for each region
     intervention_state <- interventions[interventions$StatePostal == c('CA'), c(2:9)]
@@ -101,7 +101,7 @@ process_covariates <- function(states, mobility, intervention = NULL,
     
     
     # Works out state start point
-    data_state <- data_state[index2:nrow(data_state),]
+    #data_state <- data_state[index2:nrow(data_state),]
     # Work out how much padding need at end
     N <- length(data_state$daily_cases)
     forecast_length <- num_days_sim - N[[1]]
@@ -228,30 +228,38 @@ process_covariates <- function(states, mobility, intervention = NULL,
 pad_mobility <- function(len_mobility, num_pad, min_date, covariates_state, forecast_length, data_state, State){
   if (num_pad <= 0){
     covariates_state <- covariates_state[covariates_state$date >=min_date, ]
-    pad_dates_end <- max(covariates_state$date) + 
-      days(1:(forecast_length - (min(data_state$date) - min(covariates_state$date)) + 
-                (max(data_state$date) - max(covariates_state$date))))
+    pad_dates_end <- max(covariates_state$date)  
+     # + days(1:(forecast_length - (min(data_state$date) - min(covariates_state$date)) + 
+              #  (max(data_state$date) - max(covariates_state$date))))
     for_length <- length(pad_dates_end)
     
     len_covariates <- length(covariates_state$grocery.pharmacy)
-    padded_covariates <- data.frame("code" = rep(State, length(covariates_state$date) + for_length),
-                                    "date" = c(covariates_state$date, pad_dates_end),
-                                    "grocery.pharmacy" = c(covariates_state$grocery.pharmacy, 
-                                                           rep(median(covariates_state$grocery.pharmacy[(len_covariates-7):len_covariates],na.rm = TRUE),
-                                                               for_length)),
-                                    "parks" = c(covariates_state$parks, 
-                                                rep(median(covariates_state$parks[(len_covariates-7):len_covariates],na.rm = TRUE), for_length)), 
-                                    "residential" = c(covariates_state$residential, 
-                                                      rep(median(covariates_state$residential[(len_covariates-7):len_covariates], na.rm = TRUE), for_length)),
-                                    "retail.recreation" = c(covariates_state$retail.recreation, 
-                                                            rep(median(covariates_state$retail.recreation[(len_covariates-7):len_covariates],na.rm = TRUE), 
-                                                                for_length)),
-                                    "transitstations" = c(covariates_state$transitstations, 
-                                                          rep(median(covariates_state$transitstations[(len_covariates-7):len_covariates], na.rm = TRUE), 
-                                                              for_length)),
-                                    "workplace" = c(covariates_state$workplace, 
-                                                    rep(median(covariates_state$workplace[(len_covariates-7):len_covariates], na.rm = TRUE), for_length)))  
+    # padded_covariates <- data.frame("code" = rep(State, length(covariates_state$date) + for_length),
+    #                                 "date" = c(covariates_state$date, pad_dates_end),
+    #                                 "grocery.pharmacy" = c(covariates_state$grocery.pharmacy, 
+    #                                                        rep(median(covariates_state$grocery.pharmacy[(len_covariates-7):len_covariates],na.rm = TRUE),
+    #                                                            for_length)),
+    #                                 "parks" = c(covariates_state$parks, 
+    #                                             rep(median(covariates_state$parks[(len_covariates-7):len_covariates],na.rm = TRUE), for_length)), 
+    #                                 "residential" = c(covariates_state$residential, 
+    #                                                   rep(median(covariates_state$residential[(len_covariates-7):len_covariates], na.rm = TRUE), for_length)),
+    #                                 "retail.recreation" = c(covariates_state$retail.recreation, 
+    #                                                         rep(median(covariates_state$retail.recreation[(len_covariates-7):len_covariates],na.rm = TRUE), 
+    #                                                             for_length)),
+    #                                 "transitstations" = c(covariates_state$transitstations, 
+    #                                                       rep(median(covariates_state$transitstations[(len_covariates-7):len_covariates], na.rm = TRUE), 
+    #                                                           for_length)),
+    #                                 "workplace" = c(covariates_state$workplace, 
+    #                                                 rep(median(covariates_state$workplace[(len_covariates-7):len_covariates], na.rm = TRUE), for_length)))  
 
+    padded_covariates <- data.frame("code" = rep(State, length(covariates_state$date)),
+                                    "date" = covariates_state$date,
+                                    "grocery.pharmacy" = covariates_state$grocery.pharmacy,
+                                    "parks" = covariates_state$parks,
+                                    "residential" = covariates_state$residential,
+                                    "retail.recreation" = covariates_state$retail.recreation,
+                                    "transitstations" = covariates_state$transitstations,
+                                    "workplace" = covariates_state$workplace)
   } else {
     pad_dates_front <- min_date + days(1:num_pad-1)
     pad_dates_end <- max(covariates_state$date) + 
@@ -278,6 +286,8 @@ pad_mobility <- function(len_mobility, num_pad, min_date, covariates_state, fore
                                     "workplace" = c(as.integer(rep(0, num_pad)), covariates_state$workplace, 
                                                     rep(median(covariates_state$workplace[(len_covariates-7):len_covariates], na.rm = TRUE), 
                                                         for_length)))
+    
+    
       
   }
   
