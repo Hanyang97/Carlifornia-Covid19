@@ -37,10 +37,6 @@ dd <- as.data.table( read.csv(infile.deaths, stringsAsFactors=FALSE) )
 colnames(dd)[1] <- 'countyFIPS'
 setnames(dd,"countyFIPS",'countyFIPS', skip_absent = TRUE)
 
-#luanma
-
-
-
 dd <- melt(dd, id.vars=c('countyFIPS','County.Name','State','stateFIPS'), variable.name='DATE', value.name='CDEATHS')
 setnames(dd, colnames(dd), gsub('\\.','_',toupper(colnames(dd))))
 dd <- subset(dd, STATE=='CA')
@@ -75,15 +71,34 @@ colnames(statecode)<-c('code','sub_region_1')
 
 #ifr county data
 ifr_by_state <- readRDS('data/weighted_ifr_states.RDS')
-CA_ifr<-ifr_by_state[ifr_by_state$code=='CA',]
-BA_ifr<-CA_ifr
-for(i in 1:(length(states)-1)){
-  BA_ifr<-rbind(BA_ifr,CA_ifr)
-}
+# CA_ifr<-ifr_by_state[ifr_by_state$code=='CA',]
+# BA_ifr<-CA_ifr
+# for(i in 1:(length(states)-1)){
+#   BA_ifr<-rbind(BA_ifr,CA_ifr)
+# }
+# 
+# CA_ifr<-BA_ifr
+# CA_ifr<-CA_ifr[c(2,3,4)]
+# CA_ifr<-cbind(CA_ifr,states,code)
 
-CA_ifr<-BA_ifr
-CA_ifr<-CA_ifr[c(2,3,4)]
-CA_ifr<-cbind(CA_ifr,states,code)
+IFR <- subset(ifr_by_state, code=='CA')$ifr
+
+# various distributions required for modeling
+mean1 = 5.1; cv1 = 0.86; # infection to onset
+mean2 = 18.8; cv2 = 0.45 # onset to death
+x1 = rgammaAlt(1e7,mean1,cv1) # infection-to-onset distribution
+x2 = rgammaAlt(1e7,mean2,cv2) # onset-to-death distribution
+
+ecdf.saved = ecdf(x1+x2)
+
+# IFR is the overall probability of dying given infection
+convolution = function(u) (IFR * ecdf.saved(u))
+
+f = rep(0,N2) # f is the probability of dying on day i given infection
+f[1] = (convolution(1.5) - convolution(0))
+for(i in 2:N2) {
+  f[i] = (convolution(i+.5) - convolution(i-.5)) 
+}
 
 #case https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/
 infile.case <- file.path(indir, 'data','covid_confirmed_usafacts.csv')
@@ -164,6 +179,8 @@ ca_mob1[, c(4:9)] <- ca_mob1[, c(4:9)]/100
 ca_mob1[, c(4:8)] <- ca_mob1[, c(4:8)] * -1
 ca_mob1$avg <- rowMeans(ca_mob1[,c(4:6,8)])
 
+
+
 ######################################
 
 
@@ -204,7 +221,7 @@ dd1 <- subset(dd1, date>=min_date)
 
 deaths <- matrix(data=dd1$daily_deaths, nrow = N2, ncol = M)
 
-f <- matrix(CA_ifr$ifr[1], nrow = N2, ncol = M)
+f <- matrix(f, nrow = N2, ncol = M)
 
 X_partial <- list()
 
@@ -223,7 +240,7 @@ EpidemicStart <- rep(31,M)
 
 pop <- unique(dd1$pop_count)
 
-SI <- stan_data[["SI"]][15:148]
+SI <- stan_data[["SI"]][1:N2]
 
 data1 <- c("M", "P", "P_partial_state", "N0", "N", "N2", "deaths", "f", "X", "X_partial_state", "EpidemicStart", "pop", "SI")
 
@@ -233,7 +250,7 @@ rstan_options(auto_write = TRUE)
 
 mod1 <- stan_model("usa/code/stan-models/base-usa-simple.stan")
 
-fit2 <- sampling(mod1, data=data1, iter=1000, chains=4)
+fit <- sampling(mod1, data=data1, iter=1000, chains=4, control=list(adapt_delta=0.9, max_treedepth=15))
 
 # data = list('M' = M,
 #             'P' = P,
