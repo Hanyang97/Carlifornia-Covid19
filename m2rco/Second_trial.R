@@ -14,7 +14,7 @@ library(readr)
 # from process_data.R
 # indir <- file directory\
 # indir <- './Carlifornia-Covid19/m2rco'
-# indir <- '/Users/or105/git/Carlifornia-Covid19/m2rco'
+# indir <- 'C:/Users/Vidoushee/Desktop/Covid USA/Carlifornia-Covid19/m2rco'
 setwd(indir)
 
 
@@ -94,11 +94,6 @@ ecdf.saved = ecdf(x1+x2)
 # IFR is the overall probability of dying given infection
 convolution = function(u) (IFR * ecdf.saved(u))
 
-f = rep(0,N2) # f is the probability of dying on day i given infection
-f[1] = (convolution(1.5) - convolution(0))
-for(i in 2:N2) {
-  f[i] = (convolution(i+.5) - convolution(i-.5)) 
-}
 
 #case https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/
 infile.case <- file.path(indir, 'data','covid_confirmed_usafacts.csv')
@@ -192,7 +187,7 @@ for(i in 1:58) {
 }
 
 # choose minimum deaths
-sig <- states[which(total_deaths>10)]
+sig <- states[which(total_deaths>80)]
 
 dd1 <- subset(dd, state_name %in% sig)
 
@@ -220,6 +215,12 @@ min_date <- min(x2$date)
 dd1 <- subset(dd1, date>=min_date)
 
 deaths <- matrix(data=dd1$daily_deaths, nrow = N2, ncol = M)
+
+f = rep(0,N2) # f is the probability of dying on day i given infection
+f[1] = (convolution(1.5) - convolution(0))
+for(i in 2:N2) {
+  f[i] = (convolution(i+.5) - convolution(i-.5)) 
+}
 
 f <- matrix(f, nrow = N2, ncol = M)
 
@@ -250,7 +251,7 @@ rstan_options(auto_write = TRUE)
 
 mod1 <- stan_model("usa/code/stan-models/base-usa-simple.stan")
 
-fit <- sampling(mod1, data=data1, iter=1000, chains=4, control=list(adapt_delta=0.9, max_treedepth=15))
+fit <- sampling(mod1, data=data1, iter=5000, chains=1, control=list(adapt_delta=0.999, max_treedepth=15), seed=123)
 
 # data = list('M' = M,
 #             'P' = P,
