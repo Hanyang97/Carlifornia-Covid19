@@ -152,8 +152,34 @@ names(ca_mob) <- c( "state", "sub_region_1",
 
 ca_mob<-merge(ca_mob,statecode,by='sub_region_1')
 ca_mob[, c(4:9)] <- ca_mob[, c(4:9)]/100
-ca_mob[, c(4:8)] <- ca_mob[, c(4:8)] * -1
+# ca_mob[, c(4:8)] <- ca_mob[, c(4:8)] * -1
 
+# missing values
+ca_mob$grocery.pharmacy <- na_interpolation(ca_mob$grocery.pharmacy, option = "linear")
+ca_mob$parks <- na_interpolation(ca_mob$parks, option = "linear")
+ca_mob$transitstations <- na_interpolation(ca_mob$transitstations, option = "linear")
+ca_mob$workplace <- na_interpolation(ca_mob$workplace, option = "linear")
+ca_mob$residential <- na_interpolation(ca_mob$residential, option = "linear")
+ca_mob$retail.recreation <- na_interpolation(ca_mob$retail.recreation, option = "linear")
+
+ca_mob$avg <- rowMeans(ca_mob[,c(4:6,8)]) + 1
+
+# eased mobility and multiplier
+ma <- function(x, n = 5){stats::filter(x, rep(1 / n, n), sides = 2)} # moving average 
+
+mm_avg <- data.frame()
+
+for (i in unique(ca_mob$code)) {
+  s <- subset(ca_mob, code==i)[,c(1,3,10,11)]
+  rebound_index = 1 + which.min(ma(s$avg))
+  rebound_data = s[rebound_index,'avg']
+  s$multiplier = s$avg / rebound_data
+  s$multiplier[1:rebound_index] = 1
+  s$multiplier = log(s$multiplier)
+  s$'avg'[(rebound_index+1):nrow(s)] = rebound_data
+  s$avg = log(s$avg)
+  mm_avg = rbind(mm_avg, s)
+}
 
 
 max_date <- max(ca_mob$date)
@@ -171,10 +197,19 @@ names(ca_mob1) <- c( "state", "sub_region_1",
                      "date", "retail.recreation", "grocery.pharmacy", "parks", "transitstations",
                      "workplace", "residential")
 ca_mob1[, c(4:9)] <- ca_mob1[, c(4:9)]/100
-ca_mob1[, c(4:8)] <- ca_mob1[, c(4:8)] * -1
-ca_mob1$avg <- rowMeans(ca_mob1[,c(4:6,8)])
+# ca_mob1[, c(4:8)] <- ca_mob1[, c(4:8)] * -1
+ca_mob1$avg <- rowMeans(ca_mob1[,c(4:6,8)]) + 1
 
+ca_mob1 = ca_mob1[,c(1,3,10)]
 
+X1 = ca_mob1
+rebound_index = 1 + which.min(ma(X1$avg))
+rebound_data = X1[rebound_index,'avg']
+X1$multiplier = X1$avg / rebound_data
+X1$multiplier[1:rebound_index] = 1
+X1$multiplier = log(X1$multiplier)
+X1$'avg'[(rebound_index+1):nrow(X1)] = rebound_data
+X1$avg = log(X1$avg)
 
 ######################################
 
@@ -187,16 +222,16 @@ for(i in 1:58) {
 }
 
 # choose minimum deaths
-sig <- states[which(total_deaths>80)]
+sig <- states[which(total_deaths>400)]
 
 dd1 <- subset(dd, state_name %in% sig)
 
 # no. of counties
 M = length(sig)
 
-P = 3
+P = 2
 
-P_partial_state = 3
+P_partial_state = 2
 
 N0 = 6
 
@@ -204,13 +239,13 @@ N <- rep(134, M)
 
 N2 = 134
 
-x2 <- subset(ca_mob, sub_region_1 %in% sig)
+# x2 <- subset(ca_mob, sub_region_1 %in% sig)
+# 
+# x2$grocery.pharmacy <- na_interpolation(x2$grocery.pharmacy, option = "linear")
+# 
+# x2$avg <- rowMeans(x2[,c(4:6,8)])
 
-x2$grocery.pharmacy <- na_interpolation(x2$grocery.pharmacy, option = "linear")
-
-x2$avg <- rowMeans(x2[,c(4:6,8)])
-
-min_date <- min(x2$date)
+min_date <- min(mm_avg$date)
 
 dd1 <- subset(dd1, date>=min_date)
 
@@ -227,15 +262,13 @@ f <- matrix(f, nrow = N2, ncol = M)
 X_partial <- list()
 
 for (i in 1:M) {
-  s <- subset(x2, sub_region_1==sig[i])
-  X_partial[[i]] <- as.matrix(s[, c(11,7,9)], ncol=3)
+  s <- subset(mm_avg, sub_region_1==sig[i])
+  X_partial[[i]] <- as.matrix(s[, c(4,5)], ncol=2)
 }
 
 X_partial_state <- as.matrix(X_partial)
 
-X1 <- ca_mob1[,c(10,7,9)]
-
-X <- as.matrix(X1)
+X <- as.matrix(X1[,c(3,4)])
 
 EpidemicStart <- rep(31,M)
 
@@ -251,7 +284,7 @@ rstan_options(auto_write = TRUE)
 
 mod1 <- stan_model("usa/code/stan-models/base-usa-simple.stan")
 
-fit <- sampling(mod1, data=data1, iter=5000, chains=1, control=list(adapt_delta=0.999, max_treedepth=15), seed=123)
+fit <- sampling(mod1, data=data1, iter=5000, chains=4, control=list(adapt_delta=0.999, max_treedepth=15))
 
 # data = list('M' = M,
 #             'P' = P,
